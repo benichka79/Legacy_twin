@@ -41,7 +41,10 @@ const DISCLOSURE_TEXT =
 // rarely crosses the bar, so CI behavior is unchanged; a real embedder (Voyage)
 // lets paraphrases through. Both stay strict: weak matches still refuse.
 const MIN_COVERAGE = 0.34;
-const SEMANTIC_MIN = 0.55;
+// Measured with voyage-3.5 on this corpus: true cross-language matches score
+// ~0.51-0.62, topically-adjacent false matches peak ~0.47. The 0.50 bar admits
+// truth with a thin margin; generation + claim verification backstop the rest.
+const SEMANTIC_MIN = 0.5;
 
 // Lazy self-heal: embed any rows still missing vectors. Production moves this
 // into the worker; at skeleton scale, embedding stragglers at ask time keeps
@@ -148,7 +151,16 @@ export async function respond(
   // and semantic (pgvector cosine over fact embeddings).
   const embedder = getEmbed();
   trace.embed = embedder.name;
-  await ensureEmbeddings(profileId, embedder);
+
+  // Embedding-provider failures (rate limits, outages) degrade to lexical-only
+  // retrieval — an ask must never 500 because the semantic channel is down.
+  let qvec: number[] = [];
+  try {
+    await ensureEmbeddings(profileId, embedder);
+    [qvec] = await embedder.embed([question], "query");
+  } catch (err) {
+    trace.embed_degraded = String(err).slice(0, 200);
+  }
 
   interface Candidate {
     fact_id: string;
@@ -173,8 +185,7 @@ export async function respond(
     [profileId, question]
   );
 
-  const [qvec] = await embedder.embed([question], "query");
-  const vecRows = isZeroVector(qvec)
+  const vecRows = qvec.length === 0 || isZeroVector(qvec)
     ? []
     : await q<Candidate>(
         `select f.id as fact_id, s.id as story_unit_id, f.statement, s.body as context,

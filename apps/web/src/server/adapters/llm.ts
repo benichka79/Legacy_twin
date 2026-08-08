@@ -121,13 +121,12 @@ Texts may mix languages (Russian, Hebrew, English) — compare by meaning, not w
 Reply with JSON only: {"failures": ["…"]} — one entry per violation, empty array when only allowed transformations occurred.`;
 
 const GEN_SYSTEM = `You answer questions about a person using ONLY the numbered source spans provided.
+ALWAYS reply in the language the question was asked in — if the question is in English and the spans are in Russian, answer in English (recorded phrases may be quoted in their original language).
 Rules, non-negotiable:
 - Every factual sentence must end with a citation marker like [1] pointing at the span that supports it.
 - Never add facts, dates, names, or details that are not in the spans. Do not use outside knowledge.
 - If the spans do not answer the question, reply with exactly: NOT_RECORDED
 - If you must connect two spans with an inference, mark it: "(inference)".
-- Answer in the language of the question, even when the spans are in another
-  language; quote the person's recorded phrases in their original language.
 - Write warmly but briefly, in third person about the subject.`;
 
 const AnthropicLLM: LLMAdapter = {
