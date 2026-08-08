@@ -54,6 +54,11 @@ Set in `.env`:
 - `ASR_PROVIDER=deepgram` + `DEEPGRAM_API_KEY` — real audio transcription for the
   in-browser recorder and audio uploads (key from console.deepgram.com; new accounts
   include free credit; `ASR_MODEL=nova-2` if `nova-3` is unavailable).
+- `EMBED_PROVIDER=voyage` + `VOYAGE_API_KEY` — semantic retrieval via pgvector
+  (key from dash.voyageai.com; free tier available). Retrieval is hybrid: lexical
+  FTS and embedding cosine, and a span qualifies via either gate — with the mock
+  embedder (deterministic hashing) behavior matches plain FTS, so CI is stable.
+  Embeddings backfill lazily at ask time; new content is embedded on the next ask.
 
 The capture page runs a **guided interview**: curated questions across life domains
 (`apps/web/src/app/capture/prompts.ts`); the question travels with the recording and
@@ -74,9 +79,8 @@ cookie sessions, and a `grants` table mapping users to roles. Actors are
 ## What's deliberately missing (Phase 1 is concierge)
 
 Identity verification (IDV/liveness — Phase 2; passwords are the skeleton stand-in),
-payments, voice, embeddings (FTS retrieval for now; pgvector is installed and waiting),
-Memorial Mode, death verification, S3 (local-disk vault behind the same interface).
-See ARCHITECTURE.md §15 for what lands in which phase.
+payments, voice, Memorial Mode, death verification, S3 (local-disk vault behind the
+same interface). See ARCHITECTURE.md §15 for what lands in which phase.
 
 ## Layout
 

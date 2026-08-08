@@ -1,6 +1,12 @@
 import { q, DEMO_PROFILE_ID } from "./db";
 import { checkPolicy, audit } from "./pdp";
 import { getLLM, type SpanRef } from "./adapters/llm";
+import {
+  getEmbed,
+  toVectorLiteral,
+  isZeroVector,
+  type EmbedAdapter,
+} from "./adapters/embed";
 
 // The answer path (ARCHITECTURE.md §7 / fig 2):
 // consent gate → retrieve approved-only → sufficiency gate → generate → verify → cite.
@@ -29,9 +35,36 @@ const DISCLOSURE_RE =
 const DISCLOSURE_TEXT =
   "I'm an AI representation built only from stories this person recorded and approved. I'm not the person, and I don't have memories beyond what they chose to keep here.";
 
-// Sufficiency gate: at least this fraction of the question's content words must be
-// supported by a retrieved span. Embeddings replace this heuristic later; the gate stays.
+// Sufficiency gates: a span qualifies when EITHER bar clears. Coverage is lexical
+// (fraction of the question's content words supported); semantic is embedding
+// cosine similarity. With the mock embedder similarity mirrors token overlap and
+// rarely crosses the bar, so CI behavior is unchanged; a real embedder (Voyage)
+// lets paraphrases through. Both stay strict: weak matches still refuse.
 const MIN_COVERAGE = 0.34;
+const SEMANTIC_MIN = 0.55;
+
+// Lazy self-heal: embed any rows still missing vectors. Production moves this
+// into the worker; at skeleton scale, embedding stragglers at ask time keeps
+// ingestion vendor-free and the archive always retrievable.
+async function ensureEmbeddings(profileId: string, embedder: EmbedAdapter): Promise<void> {
+  for (const table of ["story_units", "facts"] as const) {
+    const col = table === "facts" ? "statement" : "body";
+    const rows = await q<{ id: string; text: string }>(
+      `select id, ${col} as text from ${table}
+       where profile_id = $1 and embedding is null
+       order by created_at limit 128`,
+      [profileId]
+    );
+    if (rows.length === 0) continue;
+    const vecs = await embedder.embed(rows.map((r) => r.text), "document");
+    for (let i = 0; i < rows.length; i++) {
+      await q(`update ${table} set embedding = $1::vector where id = $2`, [
+        toVectorLiteral(vecs[i]),
+        rows[i].id,
+      ]);
+    }
+  }
+}
 
 const STOPWORDS = new Set(
   ("a an the is was were are be been did do does has had have how what who where when why " +
@@ -47,12 +80,15 @@ function contentTokens(text: string, exclude: Set<string>): string[] {
   )];
 }
 
-// met≈meet, work≈working — cheap morphological tolerance until embeddings land.
+// met≈meet, work≈working — cheap morphological tolerance for lexical coverage.
 function tokensMatch(a: string, b: string): boolean {
   if (a === b) return true;
   const [s, l] = a.length <= b.length ? [a, b] : [b, a];
   if (l.length >= 4 && s.length >= 4 && l.startsWith(s)) return true;
   if (l.length - s.length > 1 || l.length < 4) return false;
+  // Short prefixes reaching the edit-distance path (car→care, cat→cats) are
+  // false matches the prefix rule already rejected — keep them rejected.
+  if (l.startsWith(s)) return false;
   // edit distance <= 1
   let i = 0, j = 0, edits = 0;
   while (i < s.length && j < l.length) {
@@ -101,15 +137,22 @@ export async function respond(
   const nameTokens = new Set(contentTokens(profile?.display_name ?? "", new Set()));
   const qTokens = contentTokens(question, nameTokens);
 
-  // 4a. Broad recall: OR-query over approved facts + their story units (P2).
-  // plainto_tsquery ANDs terms; rewriting to OR keeps recall high — precision
-  // comes from the coverage gate below. Embeddings replace this later.
-  const rows = await q<{
+  // 4a. Broad recall, two channels over approved facts only (P2):
+  // lexical (FTS OR-query — plainto_tsquery ANDs terms, so rewrite to OR)
+  // and semantic (pgvector cosine over fact embeddings).
+  const embedder = getEmbed();
+  trace.embed = embedder.name;
+  await ensureEmbeddings(profileId, embedder);
+
+  interface Candidate {
     fact_id: string;
     story_unit_id: string;
     statement: string;
     context: string;
-  }>(
+    semantic: number;
+  }
+
+  const ftsRows = await q<Omit<Candidate, "semantic">>(
     `with tq as (
        select nullif(replace(plainto_tsquery('english', $2)::text, ' & ', ' | '), '')::tsquery as v
      )
@@ -124,14 +167,45 @@ export async function respond(
     [profileId, question]
   );
 
-  // 4b. Sufficiency gate: order by how much of the question each span actually supports.
-  const scored = rows
-    .map((r) => ({ ...r, score: coverage(qTokens, `${r.statement} ${r.context}`) }))
+  const [qvec] = await embedder.embed([question], "query");
+  const vecRows = isZeroVector(qvec)
+    ? []
+    : await q<Candidate>(
+        `select f.id as fact_id, s.id as story_unit_id, f.statement, s.body as context,
+                1 - (f.embedding <=> $2::vector) as semantic
+         from facts f
+         join story_units s on s.id = f.story_unit_id
+         where f.profile_id = $1 and f.status = 'approved' and f.embedding is not null
+         order by f.embedding <=> $2::vector
+         limit 12`,
+        [profileId, toVectorLiteral(qvec)]
+      );
+
+  const byFact = new Map<string, Candidate>();
+  for (const r of ftsRows) byFact.set(r.fact_id, { ...r, semantic: 0 });
+  for (const r of vecRows) {
+    const existing = byFact.get(r.fact_id);
+    if (existing) existing.semantic = Number(r.semantic);
+    else byFact.set(r.fact_id, { ...r, semantic: Number(r.semantic) });
+  }
+
+  // 4b. Sufficiency gate: a span qualifies via lexical coverage OR semantic
+  // similarity; rank by the stronger of the two signals.
+  const scored = [...byFact.values()]
+    .map((r) => {
+      const cov = coverage(qTokens, `${r.statement} ${r.context}`);
+      return { ...r, coverage: cov, score: Math.max(cov, r.semantic) };
+    })
+    .filter((r) => r.coverage >= MIN_COVERAGE || r.semantic >= SEMANTIC_MIN)
     .sort((a, b) => b.score - a.score)
     .slice(0, 6);
-  trace.retrieved = scored.map((r) => ({ fact: r.fact_id, score: r.score }));
+  trace.retrieved = scored.map((r) => ({
+    fact: r.fact_id,
+    coverage: Number(r.coverage.toFixed(2)),
+    semantic: Number(r.semantic.toFixed(2)),
+  }));
 
-  if (scored.length === 0 || scored[0].score < MIN_COVERAGE) {
+  if (scored.length === 0) {
     trace.gate = "insufficient_evidence";
     const result: AnswerResult = { kind: "refusal", text: REFUSAL_TEXT, citations: [], trace };
     await persist(profileId, actor, question, result);
@@ -139,15 +213,13 @@ export async function respond(
     return result;
   }
 
-  const spans: SpanRef[] = scored
-    .filter((r) => r.score >= MIN_COVERAGE)
-    .map((r, i) => ({
-      n: i + 1,
-      factId: r.fact_id,
-      storyUnitId: r.story_unit_id,
-      statement: r.statement,
-      context: r.context,
-    }));
+  const spans: SpanRef[] = scored.map((r, i) => ({
+    n: i + 1,
+    factId: r.fact_id,
+    storyUnitId: r.story_unit_id,
+    statement: r.statement,
+    context: r.context,
+  }));
 
   // 5–6. Grounded generation + verification, one retry, then refusal.
   const llm = getLLM();
