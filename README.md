@@ -56,12 +56,21 @@ Set in `.env`:
 The mock LLM composes answers verbatim from approved statements, so it cannot invent
 facts by construction — useful as a deterministic eval baseline forever.
 
+## Auth
+
+Session auth with per-profile roles (no external services): scrypt passwords, HttpOnly
+cookie sessions, and a `grants` table mapping users to roles. Actors are
+`<role>:<email>`, which the consent PDP consumes directly. Demo accounts:
+
+- subject — `miriam@demo.local` / `miriam-demo` (capture, review, export, style)
+- family — `family@demo.local` / `family-demo` (ask only, own opt-in required)
+
 ## What's deliberately missing (Phase 1 is concierge)
 
-Auth (actors are hardcoded `subject:miriam` / `family:demo`), payments, voice, embeddings
-(FTS retrieval for now; pgvector is installed and waiting), Memorial Mode, death
-verification, S3 (local-disk vault behind the same interface). See ARCHITECTURE.md §15
-for what lands in which phase.
+Identity verification (IDV/liveness — Phase 2; passwords are the skeleton stand-in),
+payments, voice, embeddings (FTS retrieval for now; pgvector is installed and waiting),
+Memorial Mode, death verification, S3 (local-disk vault behind the same interface).
+See ARCHITECTURE.md §15 for what lands in which phase.
 
 ## Layout
 

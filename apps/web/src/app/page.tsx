@@ -1,8 +1,10 @@
 import { q, DEMO_PROFILE_ID } from "@/server/db";
+import { requireUser } from "@/server/auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function Dashboard() {
+  await requireUser();
   const [profile] = await q<{ display_name: string; lifecycle: string }>(
     "select display_name, lifecycle from profiles where id = $1",
     [DEMO_PROFILE_ID]

@@ -1,9 +1,13 @@
+import { redirect } from "next/navigation";
 import { q, DEMO_PROFILE_ID } from "@/server/db";
+import { requireUser } from "@/server/auth";
 import { ReviewButtons } from "./buttons";
 
 export const dynamic = "force-dynamic";
 
 export default async function ReviewPage() {
+  const user = await requireUser();
+  if (user.role !== "subject") redirect("/");
   const candidates = await q<{
     id: string;
     statement: string;

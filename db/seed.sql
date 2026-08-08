@@ -6,12 +6,27 @@ insert into profiles (id, display_name, lifecycle)
 values ('00000000-0000-0000-0000-000000000001', 'Miriam (demo subject)', 'living')
 on conflict (id) do nothing;
 
--- Consent: subject grants text capture + conversation for family; demo family member opts in.
+-- Demo accounts: miriam@demo.local / miriam-demo (subject),
+--                family@demo.local / family-demo (family member).
+insert into users (id, email, display_name, password_hash) values
+  ('00000000-0000-0000-0000-000000000101', 'miriam@demo.local', 'Miriam',
+   'ca475087acf4f571d3579e8341d4dffb:c9f7a0e52667d8c3f4a64bd5e3df55e10dbe5b611d84e70a156cb3f68865bed49342059c821aa96b3175e0dc8284d35011e385baec7efeb942eba5285a8a1f36'),
+  ('00000000-0000-0000-0000-000000000102', 'family@demo.local', 'Demo family member',
+   '794d020828e53032d424d95244652c6c:76e1613efe78b12e910682f71cdc4c46b7bb7caa9cdda71c509cf41af180753c8f54173a5d0bf9902eedb3c1df3deecc0c78d1cf4fc97cb1e02851d92788fff5')
+on conflict (email) do nothing;
+
+insert into grants (user_id, profile_id, role) values
+  ('00000000-0000-0000-0000-000000000101', '00000000-0000-0000-0000-000000000001', 'subject'),
+  ('00000000-0000-0000-0000-000000000102', '00000000-0000-0000-0000-000000000001', 'family')
+on conflict (user_id, profile_id) do nothing;
+
+-- Consent: subject grants text capture + conversation for family; the family
+-- member opts in themselves (mutual consent, §9). Actors are "<role>:<email>".
 insert into consent_events (profile_id, actor, modality, purpose, audience, action) values
-  ('00000000-0000-0000-0000-000000000001', 'subject:miriam', 'text', 'capture',      'family', 'grant'),
-  ('00000000-0000-0000-0000-000000000001', 'subject:miriam', 'text', 'conversation', 'family', 'grant'),
-  ('00000000-0000-0000-0000-000000000001', 'subject:miriam', 'text', 'export',       'family', 'grant'),
-  ('00000000-0000-0000-0000-000000000001', 'family:demo',    'text', 'conversation', 'self',   'grant');
+  ('00000000-0000-0000-0000-000000000001', 'subject:miriam@demo.local', 'text', 'capture',      'family', 'grant'),
+  ('00000000-0000-0000-0000-000000000001', 'subject:miriam@demo.local', 'text', 'conversation', 'family', 'grant'),
+  ('00000000-0000-0000-0000-000000000001', 'subject:miriam@demo.local', 'text', 'export',       'family', 'grant'),
+  ('00000000-0000-0000-0000-000000000001', 'family:family@demo.local',  'text', 'conversation', 'self',   'grant');
 
 insert into media_objects (id, profile_id, kind, filename, sha256, vault_path, status)
 values ('00000000-0000-0000-0000-000000000010', '00000000-0000-0000-0000-000000000001',

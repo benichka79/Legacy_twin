@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { respond } from "@/server/respond";
-
-// The interactant is a demo family member who has opted in (see db/seed.sql).
-const ACTOR = "family:demo";
+import { requireRole } from "@/server/auth";
 
 export async function POST(req: NextRequest) {
+  // Any granted role may ask; the PDP enforces consent (incl. per-person opt-in).
+  const user = await requireRole();
+  if (!user) return NextResponse.json({ error: "sign in to ask" }, { status: 401 });
+
   const { question } = (await req.json()) as { question?: string };
   if (!question?.trim()) return NextResponse.json({ error: "question required" }, { status: 400 });
-  const result = await respond(question.trim(), ACTOR);
+  const result = await respond(question.trim(), user.actor);
   return NextResponse.json(result);
 }

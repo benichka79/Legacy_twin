@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import { q, DEMO_PROFILE_ID } from "@/server/db";
 import { checkPolicy, audit } from "@/server/pdp";
+import { requireRole } from "@/server/auth";
 
 // Legacy Archive Format, draft 0 (P7): everything needed to rebuild the archive,
 // in one open JSON bundle. Raw media files ride alongside (vault paths included).
-const ACTOR = "subject:miriam";
-
 export async function GET() {
-  const policy = await checkPolicy(DEMO_PROFILE_ID, ACTOR, "text", "export");
+  const user = await requireRole("subject", "steward");
+  if (!user) return NextResponse.json({ error: "sign in as the subject to export" }, { status: 401 });
+
+  const policy = await checkPolicy(DEMO_PROFILE_ID, user.actor, "text", "export");
   if (!policy.allowed) return NextResponse.json({ error: policy.reason }, { status: 403 });
 
   const [profile] = await q("select * from profiles where id = $1", [DEMO_PROFILE_ID]);
@@ -39,7 +41,7 @@ export async function GET() {
       "select action, count(*)::int as count from audit_log group by action order by count desc"
     ),
   };
-  await audit(ACTOR, "archive.exported", DEMO_PROFILE_ID);
+  await audit(user.actor, "archive.exported", DEMO_PROFILE_ID);
 
   return new NextResponse(JSON.stringify(bundle, null, 2), {
     headers: {
