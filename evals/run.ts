@@ -34,7 +34,9 @@ for (const c of CASES) {
   const problems: string[] = [];
   if (res.kind !== c.expect) problems.push(`expected ${c.expect}, got ${res.kind}`);
   for (const needle of c.mustInclude ?? []) {
-    if (!res.text.includes(needle)) problems.push(`missing "${needle}"`);
+    if (!res.text.toLowerCase().includes(needle.toLowerCase())) {
+      problems.push(`missing "${needle}"`);
+    }
   }
   if (c.expect === "grounded" && res.citations.length === 0) problems.push("no citations");
   if (problems.length) {

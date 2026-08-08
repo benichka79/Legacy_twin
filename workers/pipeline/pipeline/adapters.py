@@ -20,11 +20,23 @@ def _ssl_context() -> ssl.SSLContext:
 # --------------------------------------------------------------------------- ASR
 
 
+_AUDIO_CONTENT_TYPES = {
+    ".webm": "audio/webm",
+    ".m4a": "audio/mp4",
+    ".mp4": "audio/mp4",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".flac": "audio/flac",
+}
+
+
 def transcribe(audio: bytes, filename: str) -> tuple[str, str]:
     """Returns (transcript_text, source_tag)."""
     provider = os.environ.get("ASR_PROVIDER", "mock")
     if provider == "deepgram":
-        return _transcribe_deepgram(audio), "asr:deepgram"
+        model = os.environ.get("ASR_MODEL", "nova-3")
+        return _transcribe_deepgram(audio, filename, model), f"asr:deepgram:{model}"
     text = (
         f"[mock transcript of {filename}] This is a placeholder transcript produced by the "
         "mock ASR adapter. Configure ASR_PROVIDER=deepgram with a DEEPGRAM_API_KEY to "
@@ -33,18 +45,23 @@ def transcribe(audio: bytes, filename: str) -> tuple[str, str]:
     return text, "asr:mock"
 
 
-def _transcribe_deepgram(audio: bytes) -> str:
+def _transcribe_deepgram(audio: bytes, filename: str, model: str) -> str:
+    ext = os.path.splitext(filename)[1].lower()
+    content_type = _AUDIO_CONTENT_TYPES.get(ext, "application/octet-stream")
     req = urllib.request.Request(
-        "https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true",
+        f"https://api.deepgram.com/v1/listen?model={model}&smart_format=true",
         data=audio,
         headers={
             "Authorization": f"Token {os.environ['DEEPGRAM_API_KEY']}",
-            "Content-Type": "application/octet-stream",
+            "Content-Type": content_type,
         },
     )
     with urllib.request.urlopen(req, timeout=300, context=_ssl_context()) as res:
         payload = json.load(res)
-    return payload["results"]["channels"][0]["alternatives"][0]["transcript"]
+    transcript = payload["results"]["channels"][0]["alternatives"][0]["transcript"]
+    if not transcript.strip():
+        raise RuntimeError("deepgram returned an empty transcript (silent or unreadable audio)")
+    return transcript
 
 
 # -------------------------------------------------------------- style derivation
@@ -108,11 +125,13 @@ def derive_style(samples: str) -> tuple[dict, str]:
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 
 
-def extract_facts(unit_text: str) -> list[dict]:
-    """Returns [{statement, char_start, char_end, confidence}] for one story unit."""
+def extract_facts(unit_text: str, prompt: str | None = None) -> list[dict]:
+    """Returns [{statement, char_start, char_end, confidence}] for one story unit.
+    `prompt` is the guided-interview question that elicited this answer, if any —
+    context that resolves pronouns and implied subjects ("she" = the person asked about)."""
     provider = os.environ.get("LLM_PROVIDER", "mock")
     if provider == "anthropic":
-        return _extract_anthropic(unit_text)
+        return _extract_anthropic(unit_text, prompt)
     return _extract_mock(unit_text)
 
 
@@ -138,18 +157,24 @@ def _extract_mock(unit_text: str) -> list[dict]:
 _EXTRACT_SYSTEM = (
     "Extract discrete, verifiable factual claims from this first-person memory. "
     'Reply with JSON only: {"facts": [{"statement": "...", "evidence": "<exact substring '
-    'of the input that supports it>"}]}. Statements are third-person, faithful, no invention. '
-    "At most 5."
+    "of the person's answer that supports it>\"}]}. Statements are third-person, faithful, "
+    "no invention. Evidence must be quoted from the person's own words, never from the "
+    "interviewer's question. At most 5."
 )
 
 
-def _extract_anthropic(unit_text: str) -> list[dict]:
+def _extract_anthropic(unit_text: str, prompt: str | None = None) -> list[dict]:
+    content = (
+        f"The interviewer asked: {prompt}\n\nThe person answered:\n{unit_text}"
+        if prompt
+        else unit_text
+    )
     body = json.dumps(
         {
             "model": os.environ.get("VERIFY_MODEL", "claude-haiku-4-5-20251001"),
             "max_tokens": 1024,
             "system": _EXTRACT_SYSTEM,
-            "messages": [{"role": "user", "content": unit_text}],
+            "messages": [{"role": "user", "content": content}],
         }
     ).encode()
     req = urllib.request.Request(

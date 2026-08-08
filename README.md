@@ -51,7 +51,13 @@ Set in `.env`:
 
 - `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY` — grounded generation
   (`claude-sonnet-5`) and claim-by-claim verification (`claude-haiku-4-5`).
-- `ASR_PROVIDER=deepgram` + `DEEPGRAM_API_KEY` — real audio transcription.
+- `ASR_PROVIDER=deepgram` + `DEEPGRAM_API_KEY` — real audio transcription for the
+  in-browser recorder and audio uploads (key from console.deepgram.com; new accounts
+  include free credit; `ASR_MODEL=nova-2` if `nova-3` is unavailable).
+
+The capture page runs a **guided interview**: curated questions across life domains
+(`apps/web/src/app/capture/prompts.ts`); the question travels with the recording and
+gives the extraction pipeline conversational context.
 
 The mock LLM composes answers verbatim from approved statements, so it cannot invent
 facts by construction — useful as a deterministic eval baseline forever.

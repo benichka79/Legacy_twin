@@ -68,13 +68,13 @@ def derive_style(conn: psycopg.Connection, profile_id: str) -> str:
 def process_media(conn: psycopg.Connection, media_id: str) -> str:
     with conn.cursor() as cur:
         cur.execute(
-            "select profile_id, kind, filename, vault_path from media_objects where id = %s",
+            "select profile_id, kind, filename, vault_path, prompt from media_objects where id = %s",
             (media_id,),
         )
         row = cur.fetchone()
         if row is None:
             raise RuntimeError(f"media {media_id} not found")
-        profile_id, kind, filename, vault_path = row
+        profile_id, kind, filename, vault_path, prompt = row
 
         cur.execute("update media_objects set status = 'processing' where id = %s", (media_id,))
         conn.commit()
@@ -99,7 +99,7 @@ def process_media(conn: psycopg.Connection, media_id: str) -> str:
                 (profile_id, transcript_id, unit["seq"], unit["body"], unit["char_start"], unit["char_end"]),
             )
             unit_id = cur.fetchone()[0]
-            for fact in adapters.extract_facts(unit["body"]):
+            for fact in adapters.extract_facts(unit["body"], prompt):
                 cur.execute(
                     """insert into facts (profile_id, story_unit_id, statement, char_start, char_end, confidence)
                        values (%s, %s, %s, %s, %s, %s)""",

@@ -11,8 +11,9 @@ export default async function CapturePage() {
     <>
       <h1>Capture</h1>
       <p className="sub">
-        Upload a story — a .txt/.md written memory, or an audio file (mock-transcribed unless a
-        real ASR key is configured). Originals are checksummed and immutable.
+        Answer a guided question in your own voice, write it down, or upload existing material.
+        Originals are checksummed and immutable; audio is transcribed by the worker
+        (mock unless a Deepgram key is configured).
       </p>
       <CaptureForm />
     </>
