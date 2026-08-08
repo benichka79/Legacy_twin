@@ -23,6 +23,13 @@ export interface LLMAdapter {
   name: string;
   generate(question: string, spans: SpanRef[]): Promise<Draft>;
   verify(text: string, spans: SpanRef[]): Promise<Verification>;
+  /** Rewrite a verified answer in the subject's voice. Tone only — facts and
+   *  citation markers must survive; respond.ts enforces both and falls back. */
+  style(text: string, question: string, profile: Record<string, unknown>): Promise<string>;
+  /** The §8 diff check: is the styled text a faithful restyling of the verified
+   *  original? Person/tone shift allowed; the subject's own recorded phrases from
+   *  the cited spans allowed; anything found in neither is drift. */
+  styleDiff(original: string, styled: string, spans: SpanRef[]): Promise<Verification>;
 }
 
 /* ------------------------------ mock ------------------------------ */
@@ -52,6 +59,15 @@ const MockLLM: LLMAdapter = {
     }
     return { ok: failures.length === 0, failures };
   },
+  async style(text) {
+    // Deterministic passthrough: the mock never rewrites, so evals stay stable.
+    return text;
+  },
+  async styleDiff(original, styled, _spans) {
+    return original === styled
+      ? { ok: true, failures: [] }
+      : { ok: false, failures: ["mock styleDiff only accepts identical text"] };
+  },
 };
 
 /* ---------------------------- anthropic ---------------------------- */
@@ -75,6 +91,31 @@ async function anthropicMessage(model: string, system: string, user: string): Pr
   const data = (await res.json()) as { content: Array<{ type: string; text?: string }> };
   return data.content.filter((b) => b.type === "text").map((b) => b.text).join("");
 }
+
+const STYLE_SYSTEM = `You rewrite an answer so it sounds like the person themselves speaking — their voice, cadence, and warmth — guided by the style profile provided.
+Hard rules, non-negotiable:
+- First person: the person is speaking about their own life.
+- Preserve every fact exactly: no new details, names, dates, or events, and none dropped.
+- Never invent content. You may weave in the person's own recorded phrases (the
+  profile's signature phrases) when they belong to the memory being retold; beyond
+  that, add no lessons, morals, feelings, or imagery — even if they fit the voice.
+- Keep every citation marker like [1] attached to the statement it supports.
+- Do not add greetings, sign-offs, or commentary. Similar length to the original.
+- Output only the rewritten text.`;
+
+const STYLE_DIFF_SYSTEM = `You check whether a stylistic rewrite of an answer stays faithful to it.
+
+ALLOWED — never report these:
+1. Person change (third person "Miriam…" → first person "I…"): the rewrite is the person themselves speaking.
+2. Changes of tone, rhythm, word choice, or sentence order.
+3. Phrases or details taken from the RECORDED SOURCES provided (the person's actual recordings).
+4. Dropping attribution framing such as "Miriam believes that" or "she feels that".
+
+VIOLATIONS — report only these:
+A. Content in the rewrite that appears in neither the original answer nor the recorded sources.
+B. A fact from the original answer that the rewrite omits or contradicts. Rephrasing and compressing are fine; losing the fact is not.
+
+Reply with JSON only: {"failures": ["…"]} — one entry per violation, empty array when only allowed transformations occurred.`;
 
 const GEN_SYSTEM = `You answer questions about a person using ONLY the numbered source spans provided.
 Rules, non-negotiable:
@@ -112,6 +153,34 @@ const AnthropicLLM: LLMAdapter = {
       return { ok: parsed.failures.length === 0, failures: parsed.failures };
     } catch {
       return { ok: false, failures: ["verifier returned unparseable output"] };
+    }
+  },
+  async style(text, question, profile) {
+    const model = process.env.GEN_MODEL ?? "claude-sonnet-5";
+    const styled = await anthropicMessage(
+      model,
+      STYLE_SYSTEM,
+      `Style profile:\n${JSON.stringify(profile, null, 2)}\n\nQuestion being answered: ${question}\n\nOriginal answer:\n${text}`
+    );
+    return styled.trim();
+  },
+  async styleDiff(original, styled, spans) {
+    // The nuanced allowed/violation contract needs strong instruction following;
+    // this check runs once per answer, so the stronger model is worth it.
+    const model = process.env.GEN_MODEL ?? "claude-sonnet-5";
+    const sources = spans.map((s) => `[${s.n}] ${s.context}`).join("\n");
+    const raw = await anthropicMessage(
+      model,
+      STYLE_DIFF_SYSTEM,
+      `RECORDED SOURCES:\n${sources}\n\nOriginal:\n${original}\n\nRewrite:\n${styled}`
+    );
+    try {
+      const parsed = JSON.parse(raw.replace(/^[^{]*/, "").replace(/[^}]*$/, "")) as {
+        failures: string[];
+      };
+      return { ok: parsed.failures.length === 0, failures: parsed.failures };
+    } catch {
+      return { ok: false, failures: ["style diff returned unparseable output"] };
     }
   },
 };

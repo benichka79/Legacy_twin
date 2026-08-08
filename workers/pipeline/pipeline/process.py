@@ -28,6 +28,43 @@ def segment(body: str) -> list[dict]:
     return units
 
 
+def derive_style(conn: psycopg.Connection, profile_id: str) -> str:
+    """Build a new style-profile version from approved first-party samples only:
+    story units the subject has endorsed by approving at least one fact in them."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """select distinct s.id, s.body, s.created_at, s.seq
+               from story_units s
+               join facts f on f.story_unit_id = s.id and f.status = 'approved'
+               where s.profile_id = %s
+               order by s.created_at, s.seq""",
+            (profile_id,),
+        )
+        bodies = [row[1] for row in cur.fetchall()]
+        if not bodies:
+            raise RuntimeError("no approved first-party samples to derive a style from")
+        samples = "\n\n".join(bodies)[:20000]
+
+        params, derived_by = adapters.derive_style(samples)
+
+        cur.execute(
+            "select coalesce(max(version), 0) + 1 from style_profiles where profile_id = %s",
+            (profile_id,),
+        )
+        version = cur.fetchone()[0]
+        cur.execute(
+            """insert into style_profiles (profile_id, version, params, sample_chars, derived_by)
+               values (%s, %s, %s, %s, %s)""",
+            (profile_id, version, psycopg.types.json.Json(params), len(samples), derived_by),
+        )
+        cur.execute(
+            "insert into audit_log (actor, action, subject, detail) values ('worker:pipeline', 'style.derived', %s, %s)",
+            (profile_id, psycopg.types.json.Json({"version": version, "derived_by": derived_by, "sample_chars": len(samples)})),
+        )
+        conn.commit()
+        return f"style profile v{version} derived from {len(samples)} chars ({derived_by})"
+
+
 def process_media(conn: psycopg.Connection, media_id: str) -> str:
     with conn.cursor() as cur:
         cur.execute(

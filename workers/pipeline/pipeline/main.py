@@ -33,6 +33,8 @@ def claim_and_run(conn) -> bool:
     try:
         if kind == "process_media":
             message = process.process_media(conn, payload["media_id"])
+        elif kind == "derive_style":
+            message = process.derive_style(conn, payload["profile_id"])
         else:
             raise RuntimeError(f"unknown job kind: {kind}")
         with conn.cursor() as cur:

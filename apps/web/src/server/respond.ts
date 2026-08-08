@@ -173,6 +173,36 @@ export async function respond(
     return result;
   }
 
+  // 6b. Style pass (§8): rewrite in the subject's voice — tone only. Two gates
+  // enforce "never facts": every citation marker must survive, and the styled
+  // text must re-pass claim-to-source verification. Otherwise fall back.
+  const [styleProfile] = await q<{ version: number; params: Record<string, unknown> }>(
+    "select version, params from style_profiles where profile_id = $1 order by version desc limit 1",
+    [profileId]
+  );
+  if (styleProfile) {
+    const markers = [...new Set([...text.matchAll(/\[\d+\]/g)].map((m) => m[0]))];
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const styled = await llm.style(text, question, styleProfile.params);
+      if (!(styled.length > 0 && markers.every((m) => styled.includes(m)))) {
+        trace.style = { version: styleProfile.version, applied: false, reason: "citations_dropped" };
+        continue;
+      }
+      const diff = await llm.styleDiff(text, styled, spans);
+      if (diff.ok) {
+        text = styled;
+        trace.style = { version: styleProfile.version, applied: true, attempt };
+        break;
+      }
+      trace.style = {
+        version: styleProfile.version,
+        applied: false,
+        reason: "factual_drift",
+        failures: diff.failures,
+      };
+    }
+  }
+
   // 7. Citations: only markers that actually appear in the verified answer.
   const used = new Set([...text.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1])));
   const citations: Citation[] = spans

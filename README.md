@@ -40,6 +40,7 @@ npm run eval
 | `/review` | Nothing enters the memory graph without subject approval (P1) |
 | `/ask` | Retrieval-first over approved facts only; citations or honest refusal (P2) |
 | `/api/export` | Legacy Archive Format draft 0 — the whole archive as open JSON (P7) |
+| `/api/style` | Style layer: POST derives a voice profile from approved samples (worker job); answers are then restyled in the subject's first-person voice — re-verified after styling, falling back if any fact or citation drifts (§8) |
 
 Every API route passes the consent PDP (`apps/web/src/server/pdp.ts`), consent is an
 append-only event ledger, and every action writes to `audit_log` (P8).

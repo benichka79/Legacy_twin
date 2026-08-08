@@ -15,7 +15,8 @@ export default async function Dashboard() {
        (select count(*) from facts where profile_id = $1 and status = 'candidate')      as candidates,
        (select count(*) from jobs where status in ('queued','running'))                 as jobs_open,
        (select count(*) from jobs where status = 'error')                               as jobs_error,
-       (select count(*) from audit_log)                                                 as audit`,
+       (select count(*) from audit_log)                                                 as audit,
+       (select coalesce(max(version), 0) from style_profiles where profile_id = $1)     as style_version`,
     [DEMO_PROFILE_ID]
   );
 
@@ -33,6 +34,7 @@ export default async function Dashboard() {
         <div className="card stat"><div className="n">{counts.candidates}</div><div className="l">awaiting review</div></div>
         <div className="card stat"><div className="n">{counts.jobs_open}</div><div className="l">open jobs</div></div>
         <div className="card stat"><div className="n">{counts.audit}</div><div className="l">audit events</div></div>
+        <div className="card stat"><div className="n">v{counts.style_version}</div><div className="l">style profile</div></div>
       </div>
       {Number(counts.jobs_error) > 0 && (
         <p className="mono" style={{ color: "var(--oxide)" }}>

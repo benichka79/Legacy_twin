@@ -47,6 +47,62 @@ def _transcribe_deepgram(audio: bytes) -> str:
     return payload["results"]["channels"][0]["alternatives"][0]["transcript"]
 
 
+# -------------------------------------------------------------- style derivation
+
+_STYLE_DERIVE_SYSTEM = (
+    "You analyze first-person memoir recordings and produce a style profile of the "
+    "speaker's authentic voice, for use in rendering answers the way they would say "
+    'them. Reply with JSON only: {"tone": "...", "cadence": "...", '
+    '"signature_phrases": ["..."], "speech_habits": ["..."], "themes": ["..."], '
+    '"example_lines": ["..."]}. Strict grounding rules: signature_phrases and '
+    "example_lines must be VERBATIM sentences or phrases copied exactly from the "
+    "samples — never composed, merged, or paraphrased. A downstream checker rejects "
+    "any styled answer containing words the speaker never recorded, so an invented "
+    "line poisons the whole profile. tone/cadence/speech_habits are your analytical "
+    "descriptions and may be in your own words."
+)
+
+
+def derive_style(samples: str) -> tuple[dict, str]:
+    """Returns (style_params, derived_by_tag) from approved first-party samples."""
+    provider = os.environ.get("LLM_PROVIDER", "mock")
+    if provider != "anthropic":
+        return (
+            {
+                "tone": "warm, plain-spoken (mock profile)",
+                "cadence": "short declarative sentences",
+                "signature_phrases": [],
+                "speech_habits": ["first person", "concrete detail"],
+                "themes": [],
+                "example_lines": [],
+            },
+            "mock",
+        )
+    model = os.environ.get("GEN_MODEL", "claude-sonnet-5")
+    body = json.dumps(
+        {
+            "model": model,
+            "max_tokens": 4096,
+            "system": _STYLE_DERIVE_SYSTEM,
+            "messages": [{"role": "user", "content": samples}],
+        }
+    ).encode()
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=body,
+        headers={
+            "content-type": "application/json",
+            "x-api-key": os.environ["ANTHROPIC_API_KEY"],
+            "anthropic-version": "2023-06-01",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=120, context=_ssl_context()) as res:
+        payload = json.load(res)
+    raw = "".join(block.get("text", "") for block in payload["content"])
+    raw = raw[raw.find("{") : raw.rfind("}") + 1]
+    return json.loads(raw), f"anthropic:{model}"
+
+
 # --------------------------------------------------------------- fact extraction
 
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
