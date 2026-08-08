@@ -5,6 +5,7 @@ description = "Legacy Twin processing pipeline worker: ingest, transcribe, segme
 requires-python = ">=3.11"
 dependencies = [
     "psycopg[binary]>=3.1",
+    "certifi>=2024.0",
 ]
 
 [build-system]

@@ -4,7 +4,18 @@ selected via ASR_PROVIDER / LLM_PROVIDER env vars and use plain HTTP (no SDKs)."
 import json
 import os
 import re
+import ssl
 import urllib.request
+
+
+def _ssl_context() -> ssl.SSLContext:
+    # macOS python.org builds don't see system certs; prefer certifi's bundle.
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
 
 # --------------------------------------------------------------------------- ASR
 
@@ -31,7 +42,7 @@ def _transcribe_deepgram(audio: bytes) -> str:
             "Content-Type": "application/octet-stream",
         },
     )
-    with urllib.request.urlopen(req, timeout=300) as res:
+    with urllib.request.urlopen(req, timeout=300, context=_ssl_context()) as res:
         payload = json.load(res)
     return payload["results"]["channels"][0]["alternatives"][0]["transcript"]
 
@@ -94,7 +105,7 @@ def _extract_anthropic(unit_text: str) -> list[dict]:
             "anthropic-version": "2023-06-01",
         },
     )
-    with urllib.request.urlopen(req, timeout=120) as res:
+    with urllib.request.urlopen(req, timeout=120, context=_ssl_context()) as res:
         payload = json.load(res)
     raw = "".join(block.get("text", "") for block in payload["content"])
     raw = raw[raw.find("{") : raw.rfind("}") + 1]
