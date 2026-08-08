@@ -40,6 +40,7 @@ export function AskChat() {
     <>
       <form onSubmit={ask} className="card" style={{ display: "flex", gap: 10 }}>
         <input
+          dir="auto"
           type="text"
           value={question}
           placeholder="Where did Miriam work in 1962?"
@@ -49,8 +50,8 @@ export function AskChat() {
       </form>
       {history.map((h, i) => (
         <div key={i} className={`card answer ${h.a.kind === "grounded" ? "" : "refusal"}`}>
-          <p className="mono muted" style={{ marginTop: 0 }}>Q: {h.q}</p>
-          <p>{h.a.text}</p>
+          <p dir="auto" className="mono muted" style={{ marginTop: 0 }}>Q: {h.q}</p>
+          <p dir="auto">{h.a.text}</p>
           {h.a.citations.map((c) => (
             <div className="citation" key={c.n}>
               <span className="n">[{c.n}]</span>

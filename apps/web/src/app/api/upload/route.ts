@@ -17,15 +17,20 @@ export async function POST(req: NextRequest) {
   if (!(file instanceof File)) return NextResponse.json({ error: "no file" }, { status: 400 });
   const promptRaw = form.get("prompt");
   const prompt = typeof promptRaw === "string" && promptRaw.trim() ? promptRaw.trim() : null;
+  const languageRaw = form.get("language");
+  const language =
+    typeof languageRaw === "string" && ["ru", "he", "en", "mixed"].includes(languageRaw)
+      ? languageRaw
+      : null;
 
   const buf = Buffer.from(await file.arrayBuffer());
   const kind = /\.(txt|md)$/i.test(file.name) || file.type.startsWith("text/") ? "text" : "audio";
   const { sha256, vaultPath } = await putOriginal(buf, file.name);
 
   const media = await q<{ id: string }>(
-    `insert into media_objects (profile_id, kind, filename, sha256, vault_path, prompt)
-     values ($1, $2, $3, $4, $5, $6) returning id`,
-    [DEMO_PROFILE_ID, kind, file.name, sha256, vaultPath, prompt]
+    `insert into media_objects (profile_id, kind, filename, sha256, vault_path, prompt, language)
+     values ($1, $2, $3, $4, $5, $6, $7) returning id`,
+    [DEMO_PROFILE_ID, kind, file.name, sha256, vaultPath, prompt, language]
   );
   await q("insert into jobs (kind, payload) values ('process_media', $1)", [
     JSON.stringify({ media_id: media[0].id }),

@@ -44,19 +44,50 @@ If you want bread to rise, you cannot rush it. People are the same. Patience is 
         'verbatim')
 on conflict (id) do nothing;
 
-insert into story_units (id, profile_id, transcript_id, seq, body, char_start, char_end) values
+insert into story_units (id, profile_id, transcript_id, seq, body, char_start, char_end, lang) values
   ('00000000-0000-0000-0000-000000000031', '00000000-0000-0000-0000-000000000001',
    '00000000-0000-0000-0000-000000000020', 1,
    'I started working at my uncle''s bakery on Herzl Street in Haifa in 1962. I was sixteen, and my job was to carry the flour sacks up from the cellar before dawn. The smell of the first loaves is still the smell of morning to me.',
-   0, 226),
+   0, 226, 'english'),
   ('00000000-0000-0000-0000-000000000032', '00000000-0000-0000-0000-000000000001',
    '00000000-0000-0000-0000-000000000020', 2,
    'I met my husband David at a wedding in the spring of 1965. He stepped on my foot during the dancing and then apologized for five whole minutes. I married him because a man who apologizes properly is rarer than you think.',
-   228, 447),
+   228, 447, 'english'),
   ('00000000-0000-0000-0000-000000000033', '00000000-0000-0000-0000-000000000001',
    '00000000-0000-0000-0000-000000000020', 3,
    'If you want bread to rise, you cannot rush it. People are the same. Patience is the whole secret — with dough, with children, with grief. Everything good I have made in my life, I made slowly.',
-   449, 640)
+   449, 640, 'english')
+on conflict (id) do nothing;
+
+-- Russian-language material (multilingual retrieval must stay working — evals cover it).
+insert into media_objects (id, profile_id, kind, filename, sha256, vault_path, status, language)
+values ('00000000-0000-0000-0000-000000000011', '00000000-0000-0000-0000-000000000001',
+        'text', 'miriam-stories-ru.txt', 'seed', 'seed://miriam-stories-ru', 'processed', 'ru')
+on conflict (id) do nothing;
+
+insert into transcripts (id, profile_id, media_id, body, source)
+values ('00000000-0000-0000-0000-000000000021', '00000000-0000-0000-0000-000000000001',
+        '00000000-0000-0000-0000-000000000011',
+        'Каждое лето мы ездили к бабушке в Одессу. Она пекла пирожки с вишней и всегда говорила: терпение — это половина таланта.',
+        'verbatim')
+on conflict (id) do nothing;
+
+insert into story_units (id, profile_id, transcript_id, seq, body, char_start, char_end, lang) values
+  ('00000000-0000-0000-0000-000000000034', '00000000-0000-0000-0000-000000000001',
+   '00000000-0000-0000-0000-000000000021', 1,
+   'Каждое лето мы ездили к бабушке в Одессу. Она пекла пирожки с вишней и всегда говорила: терпение — это половина таланта.',
+   0, 120, 'russian')
+on conflict (id) do nothing;
+
+insert into facts (id, profile_id, story_unit_id, statement, confidence, status, reviewed_at) values
+  ('00000000-0000-0000-0000-000000000046', '00000000-0000-0000-0000-000000000001',
+   '00000000-0000-0000-0000-000000000034',
+   'Каждое лето семья ездила к бабушке в Одессу.',
+   0.95, 'approved', now()),
+  ('00000000-0000-0000-0000-000000000047', '00000000-0000-0000-0000-000000000001',
+   '00000000-0000-0000-0000-000000000034',
+   'Бабушка пекла пирожки с вишней.',
+   0.95, 'approved', now())
 on conflict (id) do nothing;
 
 -- Approved facts (the subject reviewed these).

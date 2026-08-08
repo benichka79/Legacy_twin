@@ -66,15 +66,21 @@ async function ensureEmbeddings(profileId: string, embedder: EmbedAdapter): Prom
   }
 }
 
+// English, Russian, and Hebrew function words — the archive is multilingual.
 const STOPWORDS = new Set(
   ("a an the is was were are be been did do does has had have how what who where when why " +
     "which tell me about her his their she he they it in at on of to for with and or my your " +
-    "you i we us our them this that these those").split(" ")
+    "you i we us our them this that these those " +
+    "и в во не на я он она оно мы вы они что это как где когда почему зачем был была было были " +
+    "быть есть у о об с со к ко по за из от до для мой моя моё мои его её их твой ваш наш а но " +
+    "да нет ли же бы то ты вам нам мне тебя меня себя чем кто какой какая какое какие расскажи " +
+    "של את על עם הוא היא אני אתה אנחנו אתם הם הן מה מי איפה מתי למה איך זה זאת יש אין היה הייתה " +
+    "היו כן לא גם או אבל אז כי אל כל עוד רק ספר ספרי לי לו לה שלו שלה שלי שלהם").split(/\s+/)
 );
 
 function contentTokens(text: string, exclude: Set<string>): string[] {
   return [...new Set(
-    text.toLowerCase().split(/[^a-z0-9']+/).filter(
+    (text.toLowerCase().match(/[\p{L}\p{N}']+/gu) ?? []).filter(
       (t) => t.length >= 3 && !STOPWORDS.has(t) && !exclude.has(t)
     )
   )];
@@ -152,17 +158,17 @@ export async function respond(
     semantic: number;
   }
 
+  // Each row is parsed and queried in its own language configuration ('russian'
+  // and 'english' stem; Hebrew/mixed use 'simple'). OR-semantics via websearch
+  // rewrite keeps recall high; the coverage/semantic gates supply precision.
   const ftsRows = await q<Omit<Candidate, "semantic">>(
-    `with tq as (
-       select nullif(replace(plainto_tsquery('english', $2)::text, ' & ', ' | '), '')::tsquery as v
-     )
-     select f.id as fact_id, s.id as story_unit_id, f.statement, s.body as context
+    `select f.id as fact_id, s.id as story_unit_id, f.statement, s.body as context
      from facts f
-     join story_units s on s.id = f.story_unit_id, tq
+     join story_units s on s.id = f.story_unit_id
      where f.profile_id = $1
        and f.status = 'approved'
-       and tq.v is not null
-       and ( s.tsv @@ tq.v or to_tsvector('english', f.statement) @@ tq.v )
+       and ( s.tsv @@ replace(plainto_tsquery(s.lang, $2)::text, ' & ', ' | ')::tsquery
+          or to_tsvector(s.lang, f.statement) @@ replace(plainto_tsquery(s.lang, $2)::text, ' & ', ' | ')::tsquery )
      limit 24`,
     [profileId, question]
   );

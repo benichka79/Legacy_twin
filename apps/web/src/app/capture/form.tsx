@@ -1,12 +1,14 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { INTERVIEW_PROMPTS } from "./prompts";
+import { INTERVIEW_PROMPTS, LANGUAGE_OPTIONS, type PromptLanguage } from "./prompts";
 
 type RecState = "idle" | "recording" | "recorded";
+type CaptureLanguage = "ru" | "he" | "en" | "mixed";
 
 export function CaptureForm() {
   const [promptIndex, setPromptIndex] = useState(0);
+  const [language, setLanguage] = useState<CaptureLanguage>("ru");
   const [recState, setRecState] = useState<RecState>("idle");
   const [seconds, setSeconds] = useState(0);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -21,6 +23,8 @@ export function CaptureForm() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const prompt = INTERVIEW_PROMPTS[promptIndex];
+  const displayLang: PromptLanguage = language === "mixed" ? "ru" : language;
+  const promptText = prompt.question[displayLang];
 
   function nextPrompt() {
     setPromptIndex((i) => (i + 1) % INTERVIEW_PROMPTS.length);
@@ -75,7 +79,8 @@ export function CaptureForm() {
     try {
       const body = new FormData();
       body.append("file", file);
-      if (withPrompt) body.append("prompt", prompt.question);
+      body.append("language", language);
+      if (withPrompt) body.append("prompt", promptText);
       const res = await fetch("/api/upload", { method: "POST", body });
       const data = await res.json();
       if (res.ok) {
@@ -121,10 +126,22 @@ export function CaptureForm() {
   return (
     <>
       <div className="card">
-        <p className="provenance" style={{ marginTop: 0 }}>
-          Guided interview · {prompt.domain} · question {promptIndex + 1} of {INTERVIEW_PROMPTS.length}
+        <p className="provenance" style={{ marginTop: 0, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <span>
+            Guided interview · {prompt.domain} · question {promptIndex + 1} of {INTERVIEW_PROMPTS.length}
+          </span>
+          <select
+            value={language}
+            onChange={(e) => setLanguage(e.target.value as CaptureLanguage)}
+            style={{ marginLeft: "auto", fontFamily: "var(--mono)", fontSize: 12, padding: "4px 8px" }}
+            aria-label="Recording language"
+          >
+            {LANGUAGE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
         </p>
-        <p style={{ fontSize: 19, marginTop: 6 }}>{prompt.question}</p>
+        <p dir="auto" style={{ fontSize: 19, marginTop: 6 }}>{promptText}</p>
 
         <p style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           {recState === "idle" && (
@@ -152,6 +169,7 @@ export function CaptureForm() {
           <summary className="mono muted" style={{ cursor: "pointer" }}>…or write the answer instead</summary>
           <p>
             <textarea
+              dir="auto"
               rows={4}
               value={typed}
               placeholder="Write the answer in the subject's own words…"

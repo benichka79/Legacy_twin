@@ -68,13 +68,13 @@ def derive_style(conn: psycopg.Connection, profile_id: str) -> str:
 def process_media(conn: psycopg.Connection, media_id: str) -> str:
     with conn.cursor() as cur:
         cur.execute(
-            "select profile_id, kind, filename, vault_path, prompt from media_objects where id = %s",
+            "select profile_id, kind, filename, vault_path, prompt, language from media_objects where id = %s",
             (media_id,),
         )
         row = cur.fetchone()
         if row is None:
             raise RuntimeError(f"media {media_id} not found")
-        profile_id, kind, filename, vault_path, prompt = row
+        profile_id, kind, filename, vault_path, prompt, language = row
 
         cur.execute("update media_objects set status = 'processing' where id = %s", (media_id,))
         conn.commit()
@@ -91,7 +91,7 @@ def process_media(conn: psycopg.Connection, media_id: str) -> str:
         if kind == "text":
             body, source = raw.decode("utf-8", errors="replace"), "verbatim"
         else:
-            body, source = adapters.transcribe(raw, filename)
+            body, source = adapters.transcribe(raw, filename, language)
 
         cur.execute(
             "insert into transcripts (profile_id, media_id, body, source) values (%s, %s, %s, %s) returning id",
@@ -99,12 +99,16 @@ def process_media(conn: psycopg.Connection, media_id: str) -> str:
         )
         transcript_id = cur.fetchone()[0]
 
+        # FTS configuration per unit: stemmers exist for Russian and English;
+        # Hebrew and mixed-language text index as 'simple' (embeddings carry them).
+        fts_lang = {"ru": "russian", "en": "english"}.get(language or "en", "simple")
+
         n_facts = 0
         for unit in segment(body):
             cur.execute(
-                """insert into story_units (profile_id, transcript_id, seq, body, char_start, char_end)
-                   values (%s, %s, %s, %s, %s, %s) returning id""",
-                (profile_id, transcript_id, unit["seq"], unit["body"], unit["char_start"], unit["char_end"]),
+                """insert into story_units (profile_id, transcript_id, seq, body, char_start, char_end, lang)
+                   values (%s, %s, %s, %s, %s, %s, %s) returning id""",
+                (profile_id, transcript_id, unit["seq"], unit["body"], unit["char_start"], unit["char_end"], fts_lang),
             )
             unit_id = cur.fetchone()[0]
             for fact in adapters.extract_facts(unit["body"], prompt):

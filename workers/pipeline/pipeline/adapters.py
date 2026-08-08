@@ -31,12 +31,21 @@ _AUDIO_CONTENT_TYPES = {
 }
 
 
-def transcribe(audio: bytes, filename: str) -> tuple[str, str]:
-    """Returns (transcript_text, source_tag)."""
+def transcribe(audio: bytes, filename: str, language: str | None = None) -> tuple[str, str]:
+    """Returns (transcript_text, source_tag). `language` is the capture-time
+    choice (ru/he/en/mixed) and routes to the right Deepgram model: nova handles
+    English and Russian well; Hebrew and mixed-language speech go to Whisper."""
     provider = os.environ.get("ASR_PROVIDER", "mock")
     if provider == "deepgram":
-        model = os.environ.get("ASR_MODEL", "nova-3")
-        return _transcribe_deepgram(audio, filename, model), f"asr:deepgram:{model}"
+        if language == "ru":
+            model, params = "nova-2", "language=ru"
+        elif language in ("he", "mixed"):
+            model, params = "whisper-large", "detect_language=true"
+        else:
+            model = os.environ.get("ASR_MODEL", "nova-3")
+            params = "language=en"
+        text = _transcribe_deepgram(audio, filename, model, params)
+        return text, f"asr:deepgram:{model}:{language or 'en'}"
     text = (
         f"[mock transcript of {filename}] This is a placeholder transcript produced by the "
         "mock ASR adapter. Configure ASR_PROVIDER=deepgram with a DEEPGRAM_API_KEY to "
@@ -45,11 +54,11 @@ def transcribe(audio: bytes, filename: str) -> tuple[str, str]:
     return text, "asr:mock"
 
 
-def _transcribe_deepgram(audio: bytes, filename: str, model: str) -> str:
+def _transcribe_deepgram(audio: bytes, filename: str, model: str, params: str) -> str:
     ext = os.path.splitext(filename)[1].lower()
     content_type = _AUDIO_CONTENT_TYPES.get(ext, "application/octet-stream")
     req = urllib.request.Request(
-        f"https://api.deepgram.com/v1/listen?model={model}&smart_format=true",
+        f"https://api.deepgram.com/v1/listen?model={model}&smart_format=true&{params}",
         data=audio,
         headers={
             "Authorization": f"Token {os.environ['DEEPGRAM_API_KEY']}",
@@ -158,8 +167,9 @@ _EXTRACT_SYSTEM = (
     "Extract discrete, verifiable factual claims from this first-person memory. "
     'Reply with JSON only: {"facts": [{"statement": "...", "evidence": "<exact substring '
     "of the person's answer that supports it>\"}]}. Statements are third-person, faithful, "
-    "no invention. Evidence must be quoted from the person's own words, never from the "
-    "interviewer's question. At most 5."
+    "no invention, and written in the same language as the person's answer (the memory "
+    "may be in Russian, Hebrew, English, or a mix — never translate). Evidence must be "
+    "quoted from the person's own words, never from the interviewer's question. At most 5."
 )
 
 

@@ -24,7 +24,7 @@ function fnv1a(token: string): number {
 
 function hashEmbed(text: string): number[] {
   const vec = new Array<number>(EMBED_DIM).fill(0);
-  const tokens = text.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+  const tokens = text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
   for (const token of tokens) {
     if (token.length < 2) continue;
     const h = fnv1a(token);

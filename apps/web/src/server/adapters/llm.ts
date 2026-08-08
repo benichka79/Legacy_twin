@@ -100,6 +100,7 @@ Hard rules, non-negotiable:
   profile's signature phrases) when they belong to the memory being retold; beyond
   that, add no lessons, morals, feelings, or imagery — even if they fit the voice.
 - Keep every citation marker like [1] attached to the statement it supports.
+- Write in the same language as the original answer.
 - Do not add greetings, sign-offs, or commentary. Similar length to the original.
 - Output only the rewritten text.`;
 
@@ -115,6 +116,8 @@ VIOLATIONS — report only these:
 A. Content in the rewrite that appears in neither the original answer nor the recorded sources.
 B. A fact from the original answer that the rewrite omits or contradicts. Rephrasing and compressing are fine; losing the fact is not.
 
+Texts may mix languages (Russian, Hebrew, English) — compare by meaning, not wording.
+
 Reply with JSON only: {"failures": ["…"]} — one entry per violation, empty array when only allowed transformations occurred.`;
 
 const GEN_SYSTEM = `You answer questions about a person using ONLY the numbered source spans provided.
@@ -123,6 +126,8 @@ Rules, non-negotiable:
 - Never add facts, dates, names, or details that are not in the spans. Do not use outside knowledge.
 - If the spans do not answer the question, reply with exactly: NOT_RECORDED
 - If you must connect two spans with an inference, mark it: "(inference)".
+- Answer in the language of the question, even when the spans are in another
+  language; quote the person's recorded phrases in their original language.
 - Write warmly but briefly, in third person about the subject.`;
 
 const AnthropicLLM: LLMAdapter = {
@@ -143,7 +148,7 @@ const AnthropicLLM: LLMAdapter = {
     const sources = spans.map((s) => `[${s.n}] ${s.statement} — context: ${s.context}`).join("\n");
     const raw = await anthropicMessage(
       model,
-      `You are a strict fact checker. For the answer below, check every factual claim against the numbered sources. Reply with JSON only: {"failures": ["<claim> is not supported", ...]} — an empty array if every claim is entailed by its cited source.`,
+      `You are a strict fact checker. For the answer below, check every factual claim against the numbered sources. The answer and sources may be in different languages — judge entailment by meaning across languages. Reply with JSON only: {"failures": ["<claim> is not supported", ...]} — an empty array if every claim is entailed by its cited source.`,
       `Sources:\n${sources}\n\nAnswer to check:\n${text}`
     );
     try {
