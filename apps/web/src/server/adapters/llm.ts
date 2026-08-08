@@ -19,9 +19,14 @@ export interface Verification {
   failures: string[];
 }
 
+export interface ChatTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export interface LLMAdapter {
   name: string;
-  generate(question: string, spans: SpanRef[]): Promise<Draft>;
+  generate(question: string, spans: SpanRef[], history?: ChatTurn[]): Promise<Draft>;
   verify(text: string, spans: SpanRef[]): Promise<Verification>;
   /** Rewrite a verified answer in the subject's voice. Tone only — facts and
    *  citation markers must survive; respond.ts enforces both and falls back. */
@@ -72,7 +77,11 @@ const MockLLM: LLMAdapter = {
 
 /* ---------------------------- anthropic ---------------------------- */
 
-async function anthropicMessage(model: string, system: string, user: string): Promise<string> {
+async function anthropicChat(
+  model: string,
+  system: string,
+  messages: Array<{ role: string; content: string }>
+): Promise<string> {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -80,16 +89,15 @@ async function anthropicMessage(model: string, system: string, user: string): Pr
       "x-api-key": process.env.ANTHROPIC_API_KEY ?? "",
       "anthropic-version": "2023-06-01",
     },
-    body: JSON.stringify({
-      model,
-      max_tokens: 4096,
-      system,
-      messages: [{ role: "user", content: user }],
-    }),
+    body: JSON.stringify({ model, max_tokens: 4096, system, messages }),
   });
   if (!res.ok) throw new Error(`anthropic ${res.status}: ${await res.text()}`);
   const data = (await res.json()) as { content: Array<{ type: string; text?: string }> };
   return data.content.filter((b) => b.type === "text").map((b) => b.text).join("");
+}
+
+function anthropicMessage(model: string, system: string, user: string): Promise<string> {
+  return anthropicChat(model, system, [{ role: "user", content: user }]);
 }
 
 const STYLE_SYSTEM = `You rewrite an answer so it sounds like the person themselves speaking — their voice, cadence, and warmth — guided by the style profile provided.
@@ -131,15 +139,22 @@ Rules, non-negotiable:
 
 const AnthropicLLM: LLMAdapter = {
   name: "anthropic",
-  async generate(question, spans) {
+  async generate(question, spans, history) {
     if (spans.length === 0) return { text: "", notRecorded: true };
     const sources = spans
       .map((s) => `[${s.n}] statement: ${s.statement}\n    recorded context: ${s.context}`)
       .join("\n");
     const model = process.env.GEN_MODEL ?? "claude-sonnet-5";
-    const text = (
-      await anthropicMessage(model, GEN_SYSTEM, `Question: ${question}\n\nSource spans:\n${sources}`)
-    ).trim();
+    // Recent turns give follow-up questions their referents ("what did she do
+    // there?"); grounding rules still bind every new factual sentence to spans.
+    const messages = [
+      ...(history ?? []).slice(-6).map((h) => ({
+        role: h.role,
+        content: h.content.slice(0, 1500),
+      })),
+      { role: "user", content: `Question: ${question}\n\nSource spans:\n${sources}` },
+    ];
+    const text = (await anthropicChat(model, GEN_SYSTEM, messages)).trim();
     return { text, notRecorded: text.includes("NOT_RECORDED") };
   },
   async verify(text, spans) {

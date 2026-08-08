@@ -1,6 +1,6 @@
 import { q, DEMO_PROFILE_ID } from "./db";
 import { checkPolicy, audit } from "./pdp";
-import { getLLM, type SpanRef } from "./adapters/llm";
+import { getLLM, type SpanRef, type ChatTurn } from "./adapters/llm";
 import {
   getEmbed,
   toVectorLiteral,
@@ -24,6 +24,8 @@ export interface AnswerResult {
   text: string;
   citations: Citation[];
   trace: Record<string, unknown>;
+  conversation_id?: string;
+  message_id?: string;
 }
 
 const REFUSAL_TEXT =
@@ -118,23 +120,39 @@ function coverage(queryTokens: string[], haystack: string): number {
 export async function respond(
   question: string,
   actor: string,
-  profileId: string = DEMO_PROFILE_ID
+  profileId: string = DEMO_PROFILE_ID,
+  conversationId?: string | null
 ): Promise<AnswerResult> {
   const trace: Record<string, unknown> = { actor, profileId };
+
+  // 0. Conversation continuity: load recent turns of the caller's own thread.
+  let history: ChatTurn[] = [];
+  if (conversationId) {
+    const rows = await q<{ role: "user" | "assistant"; body: string }>(
+      `select m.role, m.body from messages m
+       join conversations c on c.id = m.conversation_id
+       where c.id = $1 and c.profile_id = $2 and c.actor = $3
+       order by m.created_at desc limit 8`,
+      [conversationId, profileId, actor]
+    );
+    history = rows.reverse().map((r) => ({ role: r.role, content: r.body }));
+    if (history.length === 0) conversationId = null; // not theirs / unknown → fresh thread
+    trace.conversation_turns = history.length;
+  }
 
   // 1. Consent gate (P1)
   const policy = await checkPolicy(profileId, actor, "text", "conversation");
   trace.policy = policy;
   if (!policy.allowed) {
-    await persist(profileId, actor, question, { kind: "denied", text: policy.reason, citations: [], trace });
+    await persist(profileId, actor, question, { kind: "denied", text: policy.reason, citations: [], trace }, conversationId);
     return { kind: "denied", text: `Access denied: ${policy.reason}`, citations: [], trace };
   }
 
   // 2. Constitution boundary: the persona says what it is when asked.
   if (DISCLOSURE_RE.test(question)) {
     const result: AnswerResult = { kind: "disclosure", text: DISCLOSURE_TEXT, citations: [], trace };
-    await persist(profileId, actor, question, result);
-    return result;
+    const ids = await persist(profileId, actor, question, result, conversationId);
+    return { ...result, ...ids };
   }
 
   // 3. Entity resolution (skeleton version): the subject's own name is implicit in
@@ -144,7 +162,11 @@ export async function respond(
     [profileId]
   );
   const nameTokens = new Set(contentTokens(profile?.display_name ?? "", new Set()));
-  const qTokens = contentTokens(question, nameTokens);
+  // Follow-ups lean on pronouns ("what did she do there?") — fold the previous
+  // user question into the retrieval text so its referents stay searchable.
+  const prevUserTurn = [...history].reverse().find((h) => h.role === "user")?.content ?? "";
+  const retrievalText = prevUserTurn ? `${prevUserTurn}\n${question}` : question;
+  const qTokens = contentTokens(retrievalText, nameTokens);
 
   // 4a. Broad recall, two channels over approved facts only (P2):
   // lexical (FTS OR-query — plainto_tsquery ANDs terms, so rewrite to OR)
@@ -157,7 +179,7 @@ export async function respond(
   let qvec: number[] = [];
   try {
     await ensureEmbeddings(profileId, embedder);
-    [qvec] = await embedder.embed([question], "query");
+    [qvec] = await embedder.embed([retrievalText], "query");
   } catch (err) {
     trace.embed_degraded = String(err).slice(0, 200);
   }
@@ -182,7 +204,7 @@ export async function respond(
        and ( s.tsv @@ replace(plainto_tsquery(s.lang, $2)::text, ' & ', ' | ')::tsquery
           or to_tsvector(s.lang, f.statement) @@ replace(plainto_tsquery(s.lang, $2)::text, ' & ', ' | ')::tsquery )
      limit 24`,
-    [profileId, question]
+    [profileId, retrievalText]
   );
 
   const vecRows = qvec.length === 0 || isZeroVector(qvec)
@@ -225,9 +247,9 @@ export async function respond(
   if (scored.length === 0) {
     trace.gate = "insufficient_evidence";
     const result: AnswerResult = { kind: "refusal", text: REFUSAL_TEXT, citations: [], trace };
-    await persist(profileId, actor, question, result);
+    const ids = await persist(profileId, actor, question, result, conversationId);
     await audit(actor, "answer.refused", profileId, { question });
-    return result;
+    return { ...result, ...ids };
   }
 
   const spans: SpanRef[] = scored.map((r, i) => ({
@@ -244,7 +266,7 @@ export async function respond(
   let text = "";
   let verified = false;
   for (let attempt = 1; attempt <= 2 && !verified; attempt++) {
-    const draft = await llm.generate(question, spans);
+    const draft = await llm.generate(question, spans, history);
     if (draft.notRecorded) break;
     const check = await llm.verify(draft.text, spans);
     trace[`verify_attempt_${attempt}`] = check;
@@ -257,9 +279,9 @@ export async function respond(
   if (!verified) {
     trace.gate = "verification_failed_or_not_recorded";
     const result: AnswerResult = { kind: "refusal", text: REFUSAL_TEXT, citations: [], trace };
-    await persist(profileId, actor, question, result);
+    const ids = await persist(profileId, actor, question, result, conversationId);
     await audit(actor, "answer.refused", profileId, { question });
-    return result;
+    return { ...result, ...ids };
   }
 
   // 6b. Style pass (§8): rewrite in the subject's voice — tone only. Two gates
@@ -299,34 +321,40 @@ export async function respond(
     .map((s) => ({ n: s.n, fact_id: s.factId, story_unit_id: s.storyUnitId, quote: s.statement }));
 
   const result: AnswerResult = { kind: "grounded", text, citations, trace };
-  await persist(profileId, actor, question, result);
+  const ids = await persist(profileId, actor, question, result, conversationId);
   await audit(actor, "answer.grounded", profileId, { question, citations: citations.length });
-  return result;
+  return { ...result, ...ids };
 }
 
 async function persist(
   profileId: string,
   actor: string,
   question: string,
-  result: Pick<AnswerResult, "kind" | "text" | "citations" | "trace">
-): Promise<void> {
-  const conv = await q<{ id: string }>(
-    "insert into conversations (profile_id, actor) values ($1, $2) returning id",
-    [profileId, actor]
-  );
+  result: Pick<AnswerResult, "kind" | "text" | "citations" | "trace">,
+  conversationId?: string | null
+): Promise<{ conversation_id: string; message_id: string }> {
+  let convId = conversationId ?? null;
+  if (!convId) {
+    const conv = await q<{ id: string }>(
+      "insert into conversations (profile_id, actor) values ($1, $2) returning id",
+      [profileId, actor]
+    );
+    convId = conv[0].id;
+  }
   await q("insert into messages (conversation_id, role, body) values ($1, 'user', $2)", [
-    conv[0].id,
+    convId,
     question,
   ]);
-  await q(
+  const [msg] = await q<{ id: string }>(
     `insert into messages (conversation_id, role, body, refusal, citations, trace)
-     values ($1, 'assistant', $2, $3, $4, $5)`,
+     values ($1, 'assistant', $2, $3, $4, $5) returning id`,
     [
-      conv[0].id,
+      convId,
       result.text,
       result.kind === "refusal" || result.kind === "denied",
       JSON.stringify(result.citations),
       JSON.stringify(result.trace),
     ]
   );
+  return { conversation_id: convId, message_id: msg.id };
 }

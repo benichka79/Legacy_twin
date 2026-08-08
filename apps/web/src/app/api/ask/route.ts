@@ -11,8 +11,11 @@ export async function POST(req: NextRequest) {
   const user = await requireRole();
   if (!user) return NextResponse.json({ error: "sign in to ask" }, { status: 401 });
 
-  const { question } = (await req.json()) as { question?: string };
+  const { question, conversation_id } = (await req.json()) as {
+    question?: string;
+    conversation_id?: string;
+  };
   if (!question?.trim()) return NextResponse.json({ error: "question required" }, { status: 400 });
-  const result = await respond(question.trim(), user.actor);
+  const result = await respond(question.trim(), user.actor, undefined, conversation_id ?? null);
   return NextResponse.json(result);
 }

@@ -26,6 +26,7 @@ insert into consent_events (profile_id, actor, modality, purpose, audience, acti
   ('00000000-0000-0000-0000-000000000001', 'subject:miriam@demo.local', 'text', 'capture',      'family', 'grant'),
   ('00000000-0000-0000-0000-000000000001', 'subject:miriam@demo.local', 'text', 'conversation', 'family', 'grant'),
   ('00000000-0000-0000-0000-000000000001', 'subject:miriam@demo.local', 'text', 'export',       'family', 'grant'),
+  ('00000000-0000-0000-0000-000000000001', 'subject:miriam@demo.local', 'voice', 'conversation', 'family', 'grant'),
   ('00000000-0000-0000-0000-000000000001', 'family:family@demo.local',  'text', 'conversation', 'self',   'grant');
 
 insert into media_objects (id, profile_id, kind, filename, sha256, vault_path, status)
