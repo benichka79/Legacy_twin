@@ -82,6 +82,37 @@ Identity verification (IDV/liveness — Phase 2; passwords are the skeleton stan
 payments, voice, Memorial Mode, death verification, S3 (local-disk vault behind the
 same interface). See ARCHITECTURE.md §15 for what lands in which phase.
 
+## Deploying free (Neon + Vercel)
+
+Zero-cost hosting with durable data; the worker runs from your machine.
+
+1. **Database — [neon.tech](https://neon.tech)** (free, no card, no expiry, pgvector):
+   create a project, copy the connection string into `.env` as `PROD_DATABASE_URL`,
+   then migrate and create real accounts (never the demo seed — its passwords are
+   public in this README):
+
+   ```bash
+   DATABASE_URL=$PROD_DATABASE_URL PGSSL=1 npm run db:migrate
+   DATABASE_URL=$PROD_DATABASE_URL PGSSL=1 npm run user -- you@example.com "You" subject <strong-password>
+   ```
+
+2. **Web — [vercel.com](https://vercel.com)** (Hobby, free, no card): Add New →
+   Project → import this repo → set **Root Directory to `apps/web`** → add env vars
+   `DATABASE_URL` (the Neon URL), `ANTHROPIC_API_KEY`, `LLM_PROVIDER=anthropic` →
+   Deploy. Hobby limits to know: ~4.5MB request bodies (≈3–4 min of audio per
+   answer) and 60s per request.
+
+3. **Worker — your machine**, whenever there's material to process:
+
+   ```bash
+   DATABASE_URL=$PROD_DATABASE_URL .venv/bin/python -m pipeline.main --once
+   ```
+
+   Jobs queue durably in the database, so nothing is lost between runs.
+
+When it's time to pay for always-on hosting, the Render blueprint below deploys the
+same repo unchanged.
+
 ## Deploying (Render)
 
 [render.yaml](render.yaml) is a Render Blueprint describing the whole stack: managed
