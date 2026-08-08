@@ -16,7 +16,10 @@ if (existsSync(envFile)) {
 }
 
 const url = process.env.DATABASE_URL ?? "postgres://legacy:legacy@localhost:5434/legacy_twin";
-const client = new pg.Client({ connectionString: url });
+// PGSSL=1 for managed databases reached over the public internet (e.g. running
+// migrations from a laptop against Render's external URL).
+const ssl = process.env.PGSSL ? { rejectUnauthorized: false } : undefined;
+const client = new pg.Client({ connectionString: url, ssl });
 const cmd = process.argv[2];
 
 async function migrate() {

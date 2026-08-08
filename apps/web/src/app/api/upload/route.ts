@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
 
   const buf = Buffer.from(await file.arrayBuffer());
   const kind = /\.(txt|md)$/i.test(file.name) || file.type.startsWith("text/") ? "text" : "audio";
-  const { sha256, vaultPath } = putOriginal(buf, file.name);
+  const { sha256, vaultPath } = await putOriginal(buf, file.name);
 
   const media = await q<{ id: string }>(
     `insert into media_objects (profile_id, kind, filename, sha256, vault_path, prompt)

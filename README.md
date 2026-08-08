@@ -82,6 +82,27 @@ Identity verification (IDV/liveness — Phase 2; passwords are the skeleton stan
 payments, voice, Memorial Mode, death verification, S3 (local-disk vault behind the
 same interface). See ARCHITECTURE.md §15 for what lands in which phase.
 
+## Deploying (Render)
+
+[render.yaml](render.yaml) is a Render Blueprint describing the whole stack: managed
+Postgres (pgvector included), the web service (migrations run on boot), and the
+worker. Media lives in the database (content-addressed `vault_blobs`), so services
+share nothing and media is backed up with the data; the S3 vault replaces this at
+scale.
+
+1. Push to GitHub, then on [render.com](https://render.com): **New → Blueprint** →
+   pick this repo → set the secret env vars when prompted (`ANTHROPIC_API_KEY`;
+   others optional) → **Apply**. (~$7/mo each for web, worker, and database.)
+2. **Do not seed demo data in production** — the demo passwords are public in this
+   README. Create real accounts against the database's *external* URL:
+
+   ```bash
+   DATABASE_URL=<external-url> PGSSL=1 npm run user -- you@example.com "Your Name" subject <strong-password>
+   ```
+
+3. Sign in at the service URL. Cookies are `secure` in production; every action
+   still passes the consent PDP and lands in the audit log.
+
 ## Layout
 
 ```

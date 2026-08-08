@@ -1,0 +1,61 @@
+# Render Blueprint: managed Postgres (pgvector) + Next.js web + Python worker.
+# Deploy: Render dashboard → New → Blueprint → pick this repo → set the
+# secret env vars when prompted → Apply. Migrations run on every web boot
+# (idempotent). Do NOT seed demo data in production — create real accounts:
+#   DATABASE_URL=<external url> PGSSL=1 npm run user -- you@example.com "You" subject <password>
+
+databases:
+  - name: legacy-twin-db
+    databaseName: legacy_twin
+    user: legacy
+    plan: basic-256mb
+    region: frankfurt
+    postgresMajorVersion: "16"
+
+services:
+  - type: web
+    name: legacy-twin-web
+    runtime: node
+    region: frankfurt
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: npm run db:migrate && npm start
+    healthCheckPath: /login
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: legacy-twin-db
+          property: connectionString
+      - key: NODE_ENV
+        value: production
+      - key: LLM_PROVIDER
+        value: anthropic
+      - key: EMBED_PROVIDER
+        value: mock            # switch to voyage + set VOYAGE_API_KEY for semantic retrieval
+      - key: ANTHROPIC_API_KEY
+        sync: false            # paste in the Render dashboard, never commit
+      - key: VOYAGE_API_KEY
+        sync: false
+
+  - type: worker
+    name: legacy-twin-worker
+    runtime: python
+    region: frankfurt
+    plan: starter
+    buildCommand: pip install -e workers/pipeline
+    startCommand: python -m pipeline.main
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: legacy-twin-db
+          property: connectionString
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: LLM_PROVIDER
+        value: anthropic
+      - key: ASR_PROVIDER
+        value: mock            # switch to deepgram + set DEEPGRAM_API_KEY for real transcription
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: DEEPGRAM_API_KEY
+        sync: false

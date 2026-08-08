@@ -79,7 +79,15 @@ def process_media(conn: psycopg.Connection, media_id: str) -> str:
         cur.execute("update media_objects set status = 'processing' where id = %s", (media_id,))
         conn.commit()
 
-        raw = pathlib.Path(vault_path).read_bytes()
+        if vault_path.startswith("db://"):
+            cur.execute("select bytes from vault_blobs where sha256 = %s", (vault_path[5:],))
+            blob = cur.fetchone()
+            if blob is None:
+                raise RuntimeError(f"vault blob {vault_path} not found")
+            raw = bytes(blob[0])
+        else:
+            # rows written before the DB-backed vault keep their filesystem paths
+            raw = pathlib.Path(vault_path).read_bytes()
         if kind == "text":
             body, source = raw.decode("utf-8", errors="replace"), "verbatim"
         else:

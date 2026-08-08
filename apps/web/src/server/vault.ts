@@ -1,31 +1,24 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, existsSync, writeFileSync } from "node:fs";
-import { join, resolve, basename } from "node:path";
+import { basename } from "node:path";
+import { q } from "./db";
 
-// Local-disk media vault (P3: originals are immutable, content-addressed, checksummed).
-// Same interface an S3-backed vault implements later; only this module changes.
-
-function vaultRoot(): string {
-  const configured = process.env.VAULT_DIR ?? "./data/vault";
-  // resolve relative to repo root whether cwd is the root or apps/web
-  const base = existsSync(join(process.cwd(), "package.json")) && existsSync(join(process.cwd(), "db"))
-    ? process.cwd()
-    : resolve(process.cwd(), "..", "..");
-  return resolve(base, configured);
-}
+// Content-addressed media vault, DB-backed (P3: immutable, checksummed
+// originals). Same bytes → same sha256 → one row, never overwritten. Backed up
+// with the database and visible to web and worker on any host. The S3 vault
+// with object-lock replaces this at scale (ARCHITECTURE.md, Phase 4) behind
+// the same interface.
 
 export interface VaultRecord {
   sha256: string;
   vaultPath: string;
 }
 
-export function putOriginal(buf: Buffer, filename: string): VaultRecord {
+export async function putOriginal(buf: Buffer, filename: string): Promise<VaultRecord> {
   const sha256 = createHash("sha256").update(buf).digest("hex");
   const safe = basename(filename).replace(/[^\w.\-]+/g, "_").slice(0, 80);
-  const dir = join(vaultRoot(), "originals");
-  mkdirSync(dir, { recursive: true });
-  const vaultPath = join(dir, `${sha256}-${safe}`);
-  // Immutable: if the object exists, never rewrite it.
-  if (!existsSync(vaultPath)) writeFileSync(vaultPath, buf, { flag: "wx" });
-  return { sha256, vaultPath };
+  await q(
+    "insert into vault_blobs (sha256, filename, bytes) values ($1, $2, $3) on conflict (sha256) do nothing",
+    [sha256, safe, buf]
+  );
+  return { sha256, vaultPath: `db://${sha256}` };
 }
