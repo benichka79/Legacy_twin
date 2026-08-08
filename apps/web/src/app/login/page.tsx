@@ -40,12 +40,14 @@ export default function LoginPage() {
         <button type="submit" disabled={busy}>{busy ? "…" : "Sign in"}</button>
         {error && <p className="mono" style={{ color: "var(--oxide)", margin: 0 }}>{error}</p>}
       </form>
-      <div className="card">
-        <p className="mono muted" style={{ margin: 0 }}>
-          Demo accounts — subject: miriam@demo.local / miriam-demo · family member:
-          family@demo.local / family-demo
-        </p>
-      </div>
+      {process.env.NODE_ENV !== "production" && (
+        <div className="card">
+          <p className="mono muted" style={{ margin: 0 }}>
+            Demo accounts — subject: miriam@demo.local / miriam-demo · family member:
+            family@demo.local / family-demo
+          </p>
+        </div>
+      )}
     </>
   );
 }
