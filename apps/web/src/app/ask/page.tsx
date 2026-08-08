@@ -1,0 +1,73 @@
+"use client";
+
+import { useState } from "react";
+
+interface Citation {
+  n: number;
+  quote: string;
+  story_unit_id: string;
+}
+interface Answer {
+  kind: "grounded" | "refusal" | "disclosure" | "denied";
+  text: string;
+  citations: Citation[];
+}
+
+export default function AskPage() {
+  const [question, setQuestion] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [history, setHistory] = useState<Array<{ q: string; a: Answer }>>([]);
+
+  async function ask(e: React.FormEvent) {
+    e.preventDefault();
+    if (!question.trim() || busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/ask", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ question }),
+      });
+      const a = (await res.json()) as Answer;
+      setHistory((h) => [{ q: question, a }, ...h]);
+      setQuestion("");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <h1>Ask</h1>
+      <p className="sub">
+        Answers come only from approved memories, with citations — anything else is an honest
+        &ldquo;not recorded.&rdquo; You are asking as <span className="mono">family:demo</span>.
+      </p>
+      <form onSubmit={ask} className="card" style={{ display: "flex", gap: 10 }}>
+        <input
+          type="text"
+          value={question}
+          placeholder="Where did Miriam work in 1962?"
+          onChange={(e) => setQuestion(e.target.value)}
+        />
+        <button type="submit" disabled={busy}>{busy ? "…" : "Ask"}</button>
+      </form>
+      {history.map((h, i) => (
+        <div key={i} className={`card answer ${h.a.kind === "grounded" ? "" : "refusal"}`}>
+          <p className="mono muted" style={{ marginTop: 0 }}>Q: {h.q}</p>
+          <p>{h.a.text}</p>
+          {h.a.citations.map((c) => (
+            <div className="citation" key={c.n}>
+              <span className="n">[{c.n}]</span>
+              {c.quote}
+              <div className="provenance">story unit {c.story_unit_id.slice(-4)} · approved by subject</div>
+            </div>
+          ))}
+          {h.a.kind !== "grounded" && (
+            <p className="provenance" style={{ marginBottom: 0 }}>outcome: {h.a.kind}</p>
+          )}
+        </div>
+      ))}
+    </>
+  );
+}

@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: legacy
+          POSTGRES_PASSWORD: legacy
+          POSTGRES_DB: legacy_twin
+        ports: ["5434:5432"]
+        options: >-
+          --health-cmd "pg_isready -U legacy -d legacy_twin"
+          --health-interval 3s --health-timeout 3s --health-retries 15
+    env:
+      DATABASE_URL: postgres://legacy:legacy@localhost:5434/legacy_twin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run db:migrate
+      - run: npm run db:seed
+      - run: npm run typecheck
+      - run: npm run eval
+
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e workers/pipeline
+      - run: python -m compileall workers/pipeline/pipeline
+      - run: python -c "from pipeline import process; assert len(process.segment('a b c d e f.\n\ng h i j k l.')) == 2; print('segment ok')"

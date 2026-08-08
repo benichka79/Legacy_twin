@@ -1,2 +1,19 @@
 .DS_Store
 .claude/settings.local.json
+
+# env & secrets
+.env
+
+# node
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+
+# python
+__pycache__/
+*.egg-info/
+.venv/
+
+# local data (vault media, db dumps)
+data/
