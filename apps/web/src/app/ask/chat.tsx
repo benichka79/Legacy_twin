@@ -8,7 +8,7 @@ interface Citation {
   story_unit_id: string;
 }
 interface Answer {
-  kind: "grounded" | "refusal" | "disclosure" | "denied";
+  kind: "grounded" | "extrapolation" | "refusal" | "disclosure" | "denied";
   text: string;
   citations: Citation[];
   conversation_id?: string;
@@ -167,7 +167,7 @@ export function AskChat() {
       {status && <p className="mono muted">{status}</p>}
 
       {history.map((h, i) => (
-        <div key={i} className={`card answer ${h.a.kind === "grounded" ? "" : "refusal"}`}>
+        <div key={i} className={`card answer ${h.a.kind === "grounded" || h.a.kind === "extrapolation" ? "" : "refusal"}`}>
           <p dir="auto" className="mono muted" style={{ marginTop: 0 }}>Q: {h.q}</p>
           <p dir="auto">
             {h.a.text}{" "}
@@ -182,6 +182,9 @@ export function AskChat() {
               </button>
             )}
           </p>
+          {h.a.kind === "extrapolation" && (
+            <p className="provenance">speaking from recorded values — not a recorded memory</p>
+          )}
           {h.a.citations.map((c) => (
             <div className="citation" key={c.n}>
               <span className="n">[{c.n}]</span>

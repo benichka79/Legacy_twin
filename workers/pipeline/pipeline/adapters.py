@@ -155,6 +155,7 @@ def _extract_mock(unit_text: str) -> list[dict]:
         facts.append(
             {
                 "statement": sentence,
+                "kind": "fact",
                 "char_start": start,
                 "char_end": start + len(sentence),
                 "confidence": 0.5,
@@ -164,12 +165,15 @@ def _extract_mock(unit_text: str) -> list[dict]:
 
 
 _EXTRACT_SYSTEM = (
-    "Extract discrete, verifiable factual claims from this first-person memory. "
-    'Reply with JSON only: {"facts": [{"statement": "...", "evidence": "<exact substring '
-    "of the person's answer that supports it>\"}]}. Statements are third-person, faithful, "
-    "no invention, and written in the same language as the person's answer (the memory "
-    "may be in Russian, Hebrew, English, or a mix — never translate). Evidence must be "
-    "quoted from the person's own words, never from the interviewer's question. At most 5."
+    "Extract discrete claims from this first-person memory. Classify each as: "
+    '"fact" (a biographical event, place, person, date), "value" (a principle or '
+    'belief they live by), or "opinion" (a view, taste, or judgment). '
+    'Reply with JSON only: {"facts": [{"statement": "...", "kind": "fact|value|opinion", '
+    '"evidence": "<exact substring of the person\'s answer that supports it>"}]}. '
+    "Statements are third-person, faithful, no invention, and written in the same "
+    "language as the person's answer (Russian, Hebrew, English, or a mix — never "
+    "translate). Evidence must be quoted from the person's own words, never from the "
+    "interviewer's question. At most 5."
 )
 
 
@@ -204,9 +208,11 @@ def _extract_anthropic(unit_text: str, prompt: str | None = None) -> list[dict]:
     for item in json.loads(raw).get("facts", []):
         evidence = item.get("evidence", "")
         start = unit_text.find(evidence) if evidence else -1
+        kind = item.get("kind", "fact")
         facts.append(
             {
                 "statement": item["statement"],
+                "kind": kind if kind in ("fact", "value", "opinion") else "fact",
                 "char_start": max(start, 0),
                 "char_end": (start + len(evidence)) if start >= 0 else 0,
                 "confidence": 0.7,

@@ -113,9 +113,9 @@ def process_media(conn: psycopg.Connection, media_id: str) -> str:
             unit_id = cur.fetchone()[0]
             for fact in adapters.extract_facts(unit["body"], prompt):
                 cur.execute(
-                    """insert into facts (profile_id, story_unit_id, statement, char_start, char_end, confidence)
-                       values (%s, %s, %s, %s, %s, %s)""",
-                    (profile_id, unit_id, fact["statement"], fact["char_start"], fact["char_end"], fact["confidence"]),
+                    """insert into facts (profile_id, story_unit_id, statement, kind, char_start, char_end, confidence)
+                       values (%s, %s, %s, %s, %s, %s, %s)""",
+                    (profile_id, unit_id, fact["statement"], fact.get("kind", "fact"), fact["char_start"], fact["char_end"], fact["confidence"]),
                 )
                 n_facts += 1
 

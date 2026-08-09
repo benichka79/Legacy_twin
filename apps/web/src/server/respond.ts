@@ -20,7 +20,7 @@ export interface Citation {
 }
 
 export interface AnswerResult {
-  kind: "grounded" | "refusal" | "disclosure" | "denied";
+  kind: "grounded" | "extrapolation" | "refusal" | "disclosure" | "denied";
   text: string;
   citations: Citation[];
   trace: Record<string, unknown>;
@@ -246,10 +246,7 @@ export async function respond(
 
   if (scored.length === 0) {
     trace.gate = "insufficient_evidence";
-    const result: AnswerResult = { kind: "refusal", text: REFUSAL_TEXT, citations: [], trace };
-    const ids = await persist(profileId, actor, question, result, conversationId);
-    await audit(actor, "answer.refused", profileId, { question });
-    return { ...result, ...ids };
+    return await extrapolateOrRefuse(profileId, actor, question, qvec, history, trace, conversationId);
   }
 
   const spans: SpanRef[] = scored.map((r, i) => ({
@@ -278,10 +275,7 @@ export async function respond(
 
   if (!verified) {
     trace.gate = "verification_failed_or_not_recorded";
-    const result: AnswerResult = { kind: "refusal", text: REFUSAL_TEXT, citations: [], trace };
-    const ids = await persist(profileId, actor, question, result, conversationId);
-    await audit(actor, "answer.refused", profileId, { question });
-    return { ...result, ...ids };
+    return await extrapolateOrRefuse(profileId, actor, question, qvec, history, trace, conversationId);
   }
 
   // 6b. Style pass (§8): rewrite in the subject's voice — tone only. Two gates
@@ -323,6 +317,97 @@ export async function respond(
   const result: AnswerResult = { kind: "grounded", text, citations, trace };
   const ids = await persist(profileId, actor, question, result, conversationId);
   await audit(actor, "answer.grounded", profileId, { question, citations: citations.length });
+  return { ...result, ...ids };
+}
+
+// Worldview mode (the third answer kind): nothing direct was recorded, but the
+// person's values and opinions may still speak to the question. Retrieve them,
+// let the model extrapolate — explicitly framed, values cited — and verify that
+// no memories were invented. Factual questions and unrelated topics still refuse.
+async function extrapolateOrRefuse(
+  profileId: string,
+  actor: string,
+  question: string,
+  qvec: number[],
+  history: ChatTurn[],
+  trace: Record<string, unknown>,
+  conversationId?: string | null
+): Promise<AnswerResult> {
+  const llm = getLLM();
+  const refuse = async (): Promise<AnswerResult> => {
+    const result: AnswerResult = { kind: "refusal", text: REFUSAL_TEXT, citations: [], trace };
+    const ids = await persist(profileId, actor, question, result, conversationId);
+    await audit(actor, "answer.refused", profileId, { question });
+    return { ...result, ...ids };
+  };
+
+  const valueRows =
+    qvec.length === 0 || isZeroVector(qvec)
+      ? []
+      : await q<{
+          fact_id: string;
+          story_unit_id: string;
+          statement: string;
+          context: string;
+          semantic: number;
+        }>(
+          `select f.id as fact_id, s.id as story_unit_id, f.statement, s.body as context,
+                  1 - (f.embedding <=> $2::vector) as semantic
+           from facts f
+           join story_units s on s.id = f.story_unit_id
+           where f.profile_id = $1 and f.status = 'approved'
+             and f.kind in ('value','opinion') and f.embedding is not null
+           order by f.embedding <=> $2::vector
+           limit 8`,
+          [profileId, toVectorLiteral(qvec)]
+        );
+  // Values need only be loosely related — the model decides if they truly bear
+  // on the question; totally unrelated corpora never reach it.
+  const relevant = valueRows.filter((r) => Number(r.semantic) >= 0.25);
+  if (relevant.length === 0) return refuse();
+
+  const spans: SpanRef[] = relevant.map((r, i) => ({
+    n: i + 1,
+    factId: r.fact_id,
+    storyUnitId: r.story_unit_id,
+    statement: r.statement,
+    context: r.context,
+  }));
+  trace.worldview = spans.map((s) => s.factId);
+
+  const draft = await llm.extrapolate(question, spans, history);
+  if (draft.notRecorded) return refuse();
+  const check = await llm.verifyExtrapolation(draft.text, spans);
+  if (!check.ok) {
+    trace.extrapolation_rejected = check.failures;
+    return refuse();
+  }
+
+  let text = draft.text;
+  const [styleProfile] = await q<{ version: number; params: Record<string, unknown> }>(
+    "select version, params from style_profiles where profile_id = $1 order by version desc limit 1",
+    [profileId]
+  );
+  if (styleProfile) {
+    const markers = [...new Set([...text.matchAll(/\[\d+\]/g)].map((m) => m[0]))];
+    const styled = await llm.style(text, question, styleProfile.params);
+    if (styled.length > 0 && markers.every((m) => styled.includes(m))) {
+      const diff = await llm.styleDiff(text, styled, spans);
+      if (diff.ok) {
+        text = styled;
+        trace.style = { version: styleProfile.version, applied: true };
+      }
+    }
+  }
+
+  const used = new Set([...text.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1])));
+  const citations: Citation[] = spans
+    .filter((s) => used.has(s.n))
+    .map((s) => ({ n: s.n, fact_id: s.factId, story_unit_id: s.storyUnitId, quote: s.statement }));
+
+  const result: AnswerResult = { kind: "extrapolation", text, citations, trace };
+  const ids = await persist(profileId, actor, question, result, conversationId);
+  await audit(actor, "answer.extrapolated", profileId, { question, values: citations.length });
   return { ...result, ...ids };
 }
 

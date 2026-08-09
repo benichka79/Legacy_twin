@@ -9,9 +9,10 @@ process.env.LLM_PROVIDER = process.env.EVAL_LLM_PROVIDER ?? "mock";
 import { respond } from "../apps/web/src/server/respond";
 import { pool } from "../apps/web/src/server/db";
 
+type Expect = "grounded" | "extrapolation" | "refusal" | "disclosure";
 interface Case {
   q: string;
-  expect: "grounded" | "refusal" | "disclosure";
+  expect: Expect | Expect[];
   mustInclude?: string[];
 }
 
@@ -30,14 +31,32 @@ const CASES: Case[] = [
   { q: "Какая машина была у Мириам?", expect: "refusal" },
 ];
 
+// The mock adapter never extrapolates (deterministic CI); worldview-mode cases
+// only run against the real provider.
+if (process.env.EVAL_LLM_PROVIDER === "anthropic") {
+  // Either honest outcome is correct: direct grounding when the value scores
+  // above the semantic gate, extrapolation when it only loosely relates.
+  CASES.push({
+    q: "Мне трудно ждать результатов. Что бы Мириам мне посоветовала?",
+    expect: ["grounded", "extrapolation"],
+  });
+}
+
 // Matches the seeded family member's opt-in consent (grants + consent_events).
 const ACTOR = "family:family@demo.local";
 
 let failures = 0;
 for (const c of CASES) {
-  const res = await respond(c.q, ACTOR);
+  const expects = Array.isArray(c.expect) ? c.expect : [c.expect];
+  let res = await respond(c.q, ACTOR);
+  // The embedding provider's free tier rate-limits hard; a degraded case that
+  // missed its expectation gets one retry after the window clears.
+  if (res.trace.embed_degraded && !expects.includes(res.kind)) {
+    await new Promise((r) => setTimeout(r, 30_000));
+    res = await respond(c.q, ACTOR);
+  }
   const problems: string[] = [];
-  if (res.kind !== c.expect) problems.push(`expected ${c.expect}, got ${res.kind}`);
+  if (!expects.includes(res.kind)) problems.push(`expected ${expects.join("|")}, got ${res.kind}`);
   for (const needle of c.mustInclude ?? []) {
     if (!res.text.toLowerCase().includes(needle.toLowerCase())) {
       problems.push(`missing "${needle}"`);

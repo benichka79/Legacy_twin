@@ -35,6 +35,14 @@ export interface LLMAdapter {
    *  original? Person/tone shift allowed; the subject's own recorded phrases from
    *  the cited spans allowed; anything found in neither is drift. */
   styleDiff(original: string, styled: string, spans: SpanRef[]): Promise<Verification>;
+  /** Worldview mode: when nothing was recorded on the topic, answer as the person
+   *  plausibly would — reasoning ONLY from their recorded values/opinions/stories,
+   *  framed as extrapolation, never as memory. notPossible when the question wants
+   *  a specific fact, or the values genuinely don't speak to it. */
+  extrapolate(question: string, valueSpans: SpanRef[], history?: ChatTurn[]): Promise<Draft>;
+  /** Verifier for extrapolations: no invented memories/events; predictions must
+   *  trace to the cited values; the extrapolated framing must be explicit. */
+  verifyExtrapolation(text: string, valueSpans: SpanRef[]): Promise<Verification>;
 }
 
 /* ------------------------------ mock ------------------------------ */
@@ -72,6 +80,13 @@ const MockLLM: LLMAdapter = {
     return original === styled
       ? { ok: true, failures: [] }
       : { ok: false, failures: ["mock styleDiff only accepts identical text"] };
+  },
+  async extrapolate() {
+    // Deterministic: the mock never speculates, so CI behavior is unchanged.
+    return { text: "", notRecorded: true };
+  },
+  async verifyExtrapolation() {
+    return { ok: true, failures: [] };
   },
 };
 
@@ -128,6 +143,21 @@ Texts may mix languages (Russian, Hebrew, English) — compare by meaning, not w
 
 Reply with JSON only: {"failures": ["…"]} — one entry per violation, empty array when only allowed transformations occurred.`;
 
+const EXTRAPOLATE_SYSTEM = `Nothing was recorded on this topic. You may answer only as a careful, honest extrapolation from the person's RECORDED values, opinions, and stories (the numbered spans provided) — the way someone who knew them deeply would say "knowing them, they'd probably tell you…".
+Hard rules, non-negotiable:
+- Reply with exactly NOT_POSSIBLE when the question asks for a specific fact, memory, event, person, or date (those are recorded or they are nothing), or when the provided values genuinely do not bear on the question.
+- Never invent a memory, event, or biographical detail. You may ONLY reference recorded material from the spans, cited like [1].
+- Frame the answer explicitly as extrapolation: open by acknowledging they never spoke about this directly, then reason from what they DID say.
+- Every value, principle, or story you lean on must carry its citation marker [n].
+- Answer in the language of the question. Write in third person about the subject.
+- Be warm and brief; no lectures.`;
+
+const VERIFY_EXTRAPOLATION_SYSTEM = `You check an extrapolated answer — a prediction of what a person would say, reasoned from their recorded values. Reply with JSON only: {"failures": ["…"]}. Report a failure for each of:
+A. Any claim that the person said, did, or experienced something not present in the numbered spans (invented memories are the cardinal sin).
+B. Any advice or predicted view that does not plausibly follow from the cited spans.
+C. Missing extrapolation framing — the answer must be explicit that this is inference from their values, not a recorded memory.
+The answer and spans may be in different languages; judge by meaning. Empty array if clean.`;
+
 const GEN_SYSTEM = `You answer questions about a person using ONLY the numbered source spans provided.
 ALWAYS reply in the language the question was asked in — if the question is in English and the spans are in Russian, answer in English (recorded phrases may be quoted in their original language).
 Rules, non-negotiable:
@@ -182,6 +212,42 @@ const AnthropicLLM: LLMAdapter = {
       `Style profile:\n${JSON.stringify(profile, null, 2)}\n\nQuestion being answered: ${question}\n\nOriginal answer:\n${text}`
     );
     return styled.trim();
+  },
+  async extrapolate(question, valueSpans, history) {
+    if (valueSpans.length === 0) return { text: "", notRecorded: true };
+    const sources = valueSpans
+      .map((s) => `[${s.n}] (${s.statement})\n    recorded context: ${s.context}`)
+      .join("\n");
+    const model = process.env.GEN_MODEL ?? "claude-sonnet-5";
+    const messages = [
+      ...(history ?? []).slice(-6).map((h) => ({
+        role: h.role,
+        content: h.content.slice(0, 1500),
+      })),
+      {
+        role: "user",
+        content: `Question: ${question}\n\nRecorded values, opinions, and stories:\n${sources}`,
+      },
+    ];
+    const text = (await anthropicChat(model, EXTRAPOLATE_SYSTEM, messages)).trim();
+    return { text, notRecorded: text.includes("NOT_POSSIBLE") };
+  },
+  async verifyExtrapolation(text, valueSpans) {
+    const model = process.env.GEN_MODEL ?? "claude-sonnet-5";
+    const sources = valueSpans.map((s) => `[${s.n}] ${s.statement} — context: ${s.context}`).join("\n");
+    const raw = await anthropicMessage(
+      model,
+      VERIFY_EXTRAPOLATION_SYSTEM,
+      `Spans:\n${sources}\n\nExtrapolated answer to check:\n${text}`
+    );
+    try {
+      const parsed = JSON.parse(raw.replace(/^[^{]*/, "").replace(/[^}]*$/, "")) as {
+        failures: string[];
+      };
+      return { ok: parsed.failures.length === 0, failures: parsed.failures };
+    } catch {
+      return { ok: false, failures: ["extrapolation verifier returned unparseable output"] };
+    }
   },
   async styleDiff(original, styled, spans) {
     // The nuanced allowed/violation contract needs strong instruction following;

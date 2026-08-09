@@ -11,10 +11,11 @@ export default async function ReviewPage() {
   const candidates = await q<{
     id: string;
     statement: string;
+    kind: string;
     confidence: number;
     context: string;
   }>(
-    `select f.id, f.statement, f.confidence, s.body as context
+    `select f.id, f.statement, f.kind, f.confidence, s.body as context
      from facts f join story_units s on s.id = f.story_unit_id
      where f.profile_id = $1 and f.status = 'candidate'
      order by f.created_at`,
@@ -33,9 +34,9 @@ export default async function ReviewPage() {
       )}
       {candidates.map((f) => (
         <div className="card" key={f.id}>
-          <p style={{ marginTop: 0 }}>{f.statement}</p>
+          <p dir="auto" style={{ marginTop: 0 }}>{f.statement}</p>
           <p className="provenance">
-            source: &ldquo;{f.context.slice(0, 140)}…&rdquo; · confidence {f.confidence}
+            {f.kind} · source: &ldquo;{f.context.slice(0, 140)}…&rdquo; · confidence {f.confidence}
           </p>
           <ReviewButtons factId={f.id} />
         </div>
