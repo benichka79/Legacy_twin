@@ -105,13 +105,16 @@ export function CaptureForm() {
     const file = new File([blobRef.current], `interview-${Date.now()}.${ext}`, {
       type: mimeRef.current,
     });
-    if (await upload(file, true)) discardRecording();
+    if (await upload(file, true)) nextPrompt(); // saved — move the interview forward
   }
 
   async function submitTyped() {
     if (!typed.trim()) return;
     const file = new File([typed.trim()], `interview-${Date.now()}.txt`, { type: "text/plain" });
-    if (await upload(file, true)) setTyped("");
+    if (await upload(file, true)) {
+      setTyped("");
+      nextPrompt();
+    }
   }
 
   async function onFileSubmit(e: React.FormEvent<HTMLFormElement>) {
